@@ -1,4 +1,4 @@
-import type { AgentName, Endpoints, TypingPace } from "./models.ts";
+import type { Endpoints, ReplayAgentName, TurnEvents, TypingPace } from "./models.ts";
 
 export const DEV_ENDPOINT = "https://dev.api.smith.langchain.com";
 export const GATEWAY_URL = "https://gateway.smith.langchain.com";
@@ -35,10 +35,6 @@ export const STOP_EVENT = "Stop";
 export const PROMPT_EVENT = "UserPromptSubmit";
 export const PRE_TOOL_EVENT = "PreToolUse";
 export const POST_TOOL_EVENT = "PostToolUse";
-export const TOOL_START_EVENT: Record<AgentName, string> = {
-  claude: PRE_TOOL_EVENT,
-  codex: POST_TOOL_EVENT,
-};
 export const REPLAY_PERMISSION_MODE = "default";
 export const SUBAGENT_STOP_EVENT = "SubagentStop";
 export const SKILL_TOOL_NAME = "Skill";
@@ -110,3 +106,21 @@ export const ENGINE_EXIT_POLL_MS = 250;
 export const BYTES_PER_MEGABYTE = 1024 * 1024;
 export const USAGE_PERCENTILES = [50, 95, 99];
 export const USAGE_LINE = /^usage .+: (\d+) ms CPU, ([\d.]+) MB peak memory$/gm;
+export const CURSOR_REPLAY_MODEL = "default";
+export const CURSOR_COMPOSER_MODE = "agent";
+export const CURSOR_TURN_ENDED = "turn_ended";
+export const CURSOR_ABORTED_STATUS = "aborted";
+export const CURSOR_ERROR_STATUS = "error";
+export const CURSOR_STOP_STATUS: Record<string, string> = {
+  success: "completed",
+  error: CURSOR_ERROR_STATUS,
+};
+export const CURSOR_PROMPT_EVENT = "beforeSubmitPrompt";
+export const CURSOR_STOP_EVENT = "stop";
+export const CURSOR_TOOL_EVENT = "postToolUse";
+export const CURSOR_USER_QUERY = /<(\w+)>\n([\s\S]*)\n<\/\1>\s*$/;
+export const TURN_EVENTS: Record<ReplayAgentName, TurnEvents> = {
+  claude: { prompt: PROMPT_EVENT, stop: STOP_EVENT, toolStart: PRE_TOOL_EVENT },
+  codex: { prompt: PROMPT_EVENT, stop: STOP_EVENT, toolStart: POST_TOOL_EVENT },
+  cursor: { prompt: CURSOR_PROMPT_EVENT, stop: CURSOR_STOP_EVENT, toolStart: CURSOR_TOOL_EVENT },
+};
