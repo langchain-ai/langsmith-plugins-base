@@ -139,10 +139,9 @@ it("does not read subagent lines written after a Stop before the Stop", async ()
 it("delivers a note whose transcript size fell in the middle of a line", async () => {
   const box = sandbox();
   writeFileSync(box.main, "");
-  hook(box, note(box, "Start"));
-  await recorded(box, 1);
+  hook(box, note(box, "Start"), false);
   appendFileSync(box.main, `${transcriptLine("L1")}{"uuid":`);
-  hook(box, note(box, "Stop"));
+  hook(box, note(box, "Stop"), false);
   appendFileSync(box.main, '"L2"}\n');
   hook(box, note(box, "Next"));
   expect(await recorded(box, 5)).toEqual([
