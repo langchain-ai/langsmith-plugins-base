@@ -52,13 +52,16 @@ const imported = ({ sessionId, transcriptPath: path, tracingMode, ...rest }: Leg
   ended: false,
 });
 
-const upgrade = (stateFolder: string, sessions: LegacySession[]) =>
-  upgradeLegacyState({
-    agentStateFolder: stateFolder,
-    integration: "claude-code",
-    createBuilder: () => builder,
-    readLegacySessions: () => sessions,
-  });
+const upgrade = (stateFolder: string, sessions: LegacySession[], warnings: string[] = []) =>
+  upgradeLegacyState(
+    {
+      agentStateFolder: stateFolder,
+      integration: "claude-code",
+      createBuilder: () => builder,
+      readLegacySessions: () => sessions,
+    },
+    (warning) => warnings.push(warning),
+  );
 
 async function queueOldRun(stateFolder: string) {
   const endpoint = await localEndpoint();
@@ -84,14 +87,30 @@ it("imports the last day's sessions from their transcript's end with their own m
   expect(fs.readdirSync(stateFolder)).toEqual(["langsmith_plugins_base"]);
 });
 
-it("skips a session whose writer is unknown rather than guess one", async () => {
+it("skips a session with no writer and drops its old queue with a warning", async () => {
   const stateFolder = oldInstall();
   const endpoint = await queueOldRun(stateFolder);
   const { writer: _unknown, ...withoutWriter } = legacy("session-1", 1);
-  await upgrade(stateFolder, [withoutWriter]);
+  const warnings: string[] = [];
+  await upgrade(stateFolder, [withoutWriter], warnings);
   expect(importedSessions(stateFolder)).toEqual({});
-  expect(fs.existsSync(join(stateFolder, "langsmith_engine"))).toBe(true);
+  expect(warnings).toEqual([
+    "dropped 1 queued uploads from 1 old sessions: 0 missing from the old state, 1 with tracing off or no known destination",
+  ]);
+  expect(fs.readdirSync(stateFolder)).toEqual(["langsmith_plugins_base"]);
   expect(endpoint.requests).toEqual([]);
+  await endpoint.close();
+});
+
+it("drops the old queue of a session missing from the old state with a warning", async () => {
+  const stateFolder = oldInstall();
+  const endpoint = await queueOldRun(stateFolder);
+  const warnings: string[] = [];
+  await upgrade(stateFolder, [], warnings);
+  expect(warnings).toEqual([
+    "dropped 1 queued uploads from 1 old sessions: 1 missing from the old state, 0 with tracing off or no known destination",
+  ]);
+  expect(fs.readdirSync(stateFolder)).toEqual(["langsmith_plugins_base"]);
   await endpoint.close();
 });
 

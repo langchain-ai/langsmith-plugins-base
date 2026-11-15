@@ -4,12 +4,14 @@ import { setTimeout as delay } from "node:timers/promises";
 import type { CodingAgentIntegration } from "../../metadata/models.js";
 import { createCaptureStore } from "../../storage/capture/index.js";
 import { createLifecycleBridge } from "../../tracing/lifecycle/index.js";
+import { fillTemplate } from "../../utils/format.js";
 import { TRACER_FOLDER_MODE } from "../constants.js";
 import type { Bookmark, TracerPaths, TranscriptBuilder } from "../models.js";
 import { tracerPaths } from "../paths.js";
 import { readNewLines } from "../reader/reader.js";
 import {
   IGNORED_RUNS,
+  LEGACY_DROPPED_WARNING,
   LEGACY_ENGINE_FOLDER,
   LEGACY_IMPORT_WINDOW_MS,
   LEGACY_QUEUE_WAIT_MS,
@@ -52,20 +54,38 @@ async function sendOldQueue(
   storageRoot: string,
   integration: CodingAgentIntegration,
   sessions: LegacySession[],
+  log: (line: string) => void,
 ): Promise<boolean> {
   if (!existsSync(storageRoot)) return true;
   let sent = true;
+  const dropped = { missing: 0, writerless: 0, uploads: 0 };
   const queued = await createCaptureStore(storageRoot).enumerateSessions(integration);
-  for (const { sessionId } of queued) {
-    const writer = sessions.find((session) => session.sessionId === sessionId)?.writer;
-    const bridge = writer && createLifecycleBridge({ storageRoot, integration, sessionId, writer });
-    const result = await bridge?.drain();
-    if (result?.status !== "drained" || result.pending + result.accountMismatch > 0) sent = false;
+  for (const { sessionId, captures } of queued) {
+    const session = sessions.find((listed) => listed.sessionId === sessionId);
+    if (session?.writer === undefined) {
+      dropped[session === undefined ? "missing" : "writerless"] += 1;
+      dropped.uploads += captures.length;
+      continue;
+    }
+    const { writer } = session;
+    const result = await createLifecycleBridge({
+      storageRoot,
+      integration,
+      sessionId,
+      writer,
+    }).drain();
+    if (result.status !== "drained" || result.pending + result.accountMismatch > 0) sent = false;
   }
+  const sessionCount = dropped.missing + dropped.writerless;
+  if (sessionCount > 0)
+    log(fillTemplate(LEGACY_DROPPED_WARNING, { ...dropped, sessions: sessionCount }));
   return sent;
 }
 
-export function upgradeLegacyState(options: LegacyImport): Promise<void> {
+export function upgradeLegacyState(
+  options: LegacyImport,
+  log: (line: string) => void,
+): Promise<void> {
   if (!isAbsolute(options.agentStateFolder)) {
     throw new Error(
       `refusing to import legacy state from relative folder "${options.agentStateFolder}"`,
@@ -78,7 +98,7 @@ export function upgradeLegacyState(options: LegacyImport): Promise<void> {
   const sessions = existsSync(legacyState) ? options.readLegacySessions(legacyState) : [];
   if (!existsSync(paths.snapshot)) importSessions(options, sessions, paths);
   const integration = options.integration as CodingAgentIntegration;
-  const sending = sendOldQueue(legacyEngine, integration, sessions).catch(() => false);
+  const sending = sendOldQueue(legacyEngine, integration, sessions, log).catch(() => false);
   const timeout = delay(LEGACY_QUEUE_WAIT_MS, false, { ref: false });
   return Promise.race([sending, timeout]).then((sent) => {
     if (!sent) return;
