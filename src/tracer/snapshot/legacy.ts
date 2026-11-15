@@ -58,7 +58,7 @@ async function sendOldQueue(
 ): Promise<boolean> {
   if (!existsSync(storageRoot)) return true;
   let sent = true;
-  const dropped = { missing: 0, writerless: 0, uploads: 0 };
+  const dropped = { missing: 0, writerless: 0, otherAccount: 0, uploads: 0 };
   const queued = await createCaptureStore(storageRoot).enumerateSessions(integration);
   for (const { sessionId, captures } of queued) {
     const session = sessions.find((listed) => listed.sessionId === sessionId);
@@ -74,9 +74,13 @@ async function sendOldQueue(
       sessionId,
       writer,
     }).drain();
-    if (result.status !== "drained" || result.pending + result.accountMismatch > 0) sent = false;
+    if (result.status !== "drained" || result.pending > 0) sent = false;
+    else if (result.accountMismatch > 0) {
+      dropped.otherAccount += 1;
+      dropped.uploads += result.accountMismatch;
+    }
   }
-  const sessionCount = dropped.missing + dropped.writerless;
+  const sessionCount = dropped.missing + dropped.writerless + dropped.otherAccount;
   if (sessionCount > 0)
     log(fillTemplate(LEGACY_DROPPED_WARNING, { ...dropped, sessions: sessionCount }));
   return sent;
