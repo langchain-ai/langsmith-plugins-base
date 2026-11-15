@@ -92,6 +92,7 @@ class TracerWorker {
       builder: this.options.createBuilder({
         sessionId: saved.sessionId,
         savedState: builderState,
+        tracingMode: saved.tracingMode,
         sink: {
           post: (run) => this.queue.post(session.sessionId, session.writer, run),
           patch: (patch) => this.queue.patch(session.sessionId, session.writer, patch),

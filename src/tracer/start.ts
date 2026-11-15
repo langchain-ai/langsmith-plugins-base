@@ -1,6 +1,6 @@
 import type { StartTracerOptions, UploadQueue } from "./models.js";
 import { readNewLines } from "./reader/reader.js";
-import { importLegacyState } from "./snapshot/legacy.js";
+import { upgradeLegacyState } from "./snapshot/legacy.js";
 import { loadSnapshot, writeSnapshot } from "./snapshot/snapshot.js";
 import { createUploadQueue } from "./upload-queue/upload-queue.js";
 import { tracerPaths } from "./paths.js";
@@ -8,6 +8,7 @@ import { runWorker } from "./worker/worker.js";
 
 export function startTracerWorker(options: StartTracerOptions): Promise<void> {
   const paths = tracerPaths(options.agentStateFolder);
+  let upgrading = Promise.resolve();
   return runWorker({
     paths,
     version: options.version,
@@ -23,12 +24,7 @@ export function startTracerWorker(options: StartTracerOptions): Promise<void> {
       save: (snapshot) => writeSnapshot(paths.snapshot, snapshot),
     },
     upgradeState: () => {
-      importLegacyState({
-        stateFolder: options.agentStateFolder,
-        integration: options.integration,
-        writer: options.writer,
-        readLegacySessions: options.readLegacySessions,
-      });
+      upgrading = upgradeLegacyState(options);
     },
-  });
+  }).then(() => upgrading);
 }

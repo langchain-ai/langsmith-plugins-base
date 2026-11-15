@@ -97,17 +97,11 @@ it("delivers fifty simultaneous hooks through one worker when none is running", 
   expect(lines(box.record)).toHaveLength(50);
 });
 
-it("keeps the folder and notes holding API keys private to the owner", () => {
-  const box = sandbox();
-  hook(box, note(box, "UserPromptSubmit"), false);
-  expect([mode(box.paths.folder), mode(box.paths.notes)]).toEqual([0o700, 0o600]);
-});
-
-it("applies a note written while no worker runs in transcript order", async () => {
+it("keeps a note written while no worker runs private and applies it in transcript order", async () => {
   const box = sandbox();
   writeFileSync(box.main, transcriptLine("L1") + transcriptLine("L2"));
   hook(box, note(box, "Stop"), false);
-  expect(existsSync(box.paths.notes)).toBe(true);
+  expect([mode(box.paths.folder), mode(box.paths.notes)]).toEqual([0o700, 0o600]);
   appendFileSync(box.main, transcriptLine("L3"));
   startWorker(box);
   expect(await recorded(box, 4)).toEqual(["s line L1", "s line L2", "s note Stop", "s line L3"]);
@@ -250,6 +244,15 @@ it("hands off from an older worker to the newer plugin's worker", async () => {
 const savedNotesOffset = (box: Sandbox): number | false =>
   existsSync(box.paths.snapshot) &&
   JSON.parse(readFileSync(box.paths.snapshot, "utf8")).notes.offset;
+
+it("gives a saved session's builder its tracing mode", async () => {
+  const box = sandbox();
+  const session = { ...note(box, "Start"), bookmarks: {}, pendingNotes: [], tracingMode: "off" };
+  hook(box, note(box, "Start"), false);
+  writeFileSync(box.paths.snapshot, JSON.stringify({ version: 1, sessions: { s: session } }));
+  startWorker(box);
+  expect(await recorded(box, 2)).toEqual(["s mode off", "s note Start"]);
+});
 
 it("resumes from the saved notes offset after a restart without retaking old notes", async () => {
   const box = sandbox();

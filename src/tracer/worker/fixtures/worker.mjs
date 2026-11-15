@@ -24,7 +24,8 @@ await runWorker({
     injectWrite(bookmark);
     return readNewLines(bookmark, lineId).lines;
   },
-  createBuilder: ({ sessionId }) => {
+  createBuilder: ({ sessionId, tracingMode }) => {
+    if (tracingMode !== undefined) write(`${sessionId} mode ${tracingMode}`);
     const subagents = new Set();
     return {
       lineId: (line) => line.uuid,
