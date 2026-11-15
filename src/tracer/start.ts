@@ -23,8 +23,8 @@ export function startTracerWorker(options: StartTracerOptions): Promise<void> {
       load: () => loadSnapshot(paths.snapshot).snapshot,
       save: (snapshot) => writeSnapshot(paths.snapshot, snapshot),
     },
-    upgradeState: () => {
-      upgrading = upgradeLegacyState(options);
+    upgradeState: (log) => {
+      upgrading = upgradeLegacyState(options, log);
     },
   }).then(() => upgrading);
 }

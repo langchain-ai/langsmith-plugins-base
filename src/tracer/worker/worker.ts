@@ -62,7 +62,7 @@ class TracerWorker {
 
   start(): void {
     this.log(`${WORKER_STARTED_LOG} ${process.pid}`);
-    this.attempt("could not upgrade older state", () => this.options.upgradeState());
+    this.attempt("could not upgrade older state", () => this.options.upgradeState(this.log));
     this.attempt("could not load the snapshot", () => {
       this.saved = this.options.snapshots.load() ?? this.saved;
     });
