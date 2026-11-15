@@ -95,7 +95,7 @@ it("skips a session with no writer and drops its old queue with a warning", asyn
   await upgrade(stateFolder, [withoutWriter], warnings);
   expect(importedSessions(stateFolder)).toEqual({});
   expect(warnings).toEqual([
-    "dropped 1 queued uploads from 1 old sessions: 0 missing from the old state, 1 with tracing off or no known destination",
+    "dropped 1 queued uploads from 1 old sessions: 0 missing from the old state, 1 with tracing off or no known destination, 0 recorded under another account",
   ]);
   expect(fs.readdirSync(stateFolder)).toEqual(["langsmith_plugins_base"]);
   expect(endpoint.requests).toEqual([]);
@@ -108,9 +108,23 @@ it("drops the old queue of a session missing from the old state with a warning",
   const warnings: string[] = [];
   await upgrade(stateFolder, [], warnings);
   expect(warnings).toEqual([
-    "dropped 1 queued uploads from 1 old sessions: 1 missing from the old state, 0 with tracing off or no known destination",
+    "dropped 1 queued uploads from 1 old sessions: 1 missing from the old state, 0 with tracing off or no known destination, 0 recorded under another account",
   ]);
   expect(fs.readdirSync(stateFolder)).toEqual(["langsmith_plugins_base"]);
+  await endpoint.close();
+});
+
+it("drops old queued runs recorded under another account than the session's writer", async () => {
+  const stateFolder = oldInstall();
+  const endpoint = await queueOldRun(stateFolder);
+  const warnings: string[] = [];
+  const otherAccount = writerFor(endpoint.url, "another-key");
+  await upgrade(stateFolder, [legacy("session-1", 1, { writer: otherAccount })], warnings);
+  expect(warnings).toEqual([
+    "dropped 1 queued uploads from 1 old sessions: 0 missing from the old state, 0 with tracing off or no known destination, 1 recorded under another account",
+  ]);
+  expect(fs.readdirSync(stateFolder)).toEqual(["langsmith_plugins_base"]);
+  expect(endpoint.requests).toEqual([]);
   await endpoint.close();
 });
 
