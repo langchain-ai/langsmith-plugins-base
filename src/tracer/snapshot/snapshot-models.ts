@@ -11,11 +11,5 @@ export interface LegacySession {
   transcriptPath: string;
   updatedAt: number;
   tracingMode?: TracingMode;
-}
-
-export interface LegacyImport {
-  stateFolder: string;
-  integration: string;
-  writer: LangSmithUploadWriterOptions;
-  readLegacySessions: (stateFile: string) => LegacySession[];
+  writer?: LangSmithUploadWriterOptions;
 }
