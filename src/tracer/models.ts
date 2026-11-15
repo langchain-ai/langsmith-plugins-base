@@ -77,6 +77,7 @@ export interface BuilderContext {
   sessionId: string;
   savedState: unknown;
   sink: RunSink;
+  tracingMode?: TracingMode | undefined;
 }
 
 export type CreateTranscriptBuilder = (context: BuilderContext) => TranscriptBuilder;
@@ -135,7 +136,6 @@ export interface StartTracerOptions {
   agentStateFolder: string;
   integration: string;
   version: string;
-  writer: LangSmithUploadWriterOptions;
   createBuilder: CreateTranscriptBuilder;
   readLegacySessions: (stateFile: string) => LegacySession[];
 }

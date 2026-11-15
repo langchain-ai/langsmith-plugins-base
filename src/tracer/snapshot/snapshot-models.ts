@@ -1,5 +1,5 @@
 import type { LangSmithUploadWriterOptions } from "../../tracing/upload/models.js";
-import type { TracerSnapshot, TracingMode } from "../models.js";
+import type { StartTracerOptions, TracerSnapshot, TracingMode } from "../models.js";
 
 export interface LoadedSnapshot {
   snapshot: TracerSnapshot;
@@ -11,11 +11,10 @@ export interface LegacySession {
   transcriptPath: string;
   updatedAt: number;
   tracingMode?: TracingMode;
+  writer?: LangSmithUploadWriterOptions;
 }
 
-export interface LegacyImport {
-  stateFolder: string;
-  integration: string;
-  writer: LangSmithUploadWriterOptions;
-  readLegacySessions: (stateFile: string) => LegacySession[];
-}
+export type LegacyImport = Pick<
+  StartTracerOptions,
+  "agentStateFolder" | "integration" | "createBuilder" | "readLegacySessions"
+>;
