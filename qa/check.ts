@@ -50,7 +50,7 @@ export function checkRuns(scenario: Scenario, runs: TracedRun[]): string[] {
     if (!containsText(JSON.stringify(root.inputs) ?? "", turn.prompt.slice(0, PROMPT_MATCH_CHARS)))
       failures.push(`${label} is missing the user prompt`);
     const outputs = root.outputs as RootOutputs | null;
-    if (turn.reply !== null && !hasText(outputs?.messages ?? outputs?.text))
+    if (turn.reply !== null && !hasText(outputs?.messages) && !hasText(outputs?.text))
       failures.push(`${label} is missing the final reply`);
     if (turn.expectsModelCall !== false && !children.some((run) => run.run_type === "llm"))
       failures.push(`${label} has no model call`);
