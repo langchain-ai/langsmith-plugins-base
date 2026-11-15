@@ -147,5 +147,5 @@ export interface WorkerOptions {
   readNewLines: ReadNewLines;
   snapshots: SnapshotStore;
   version: string;
-  upgradeState: () => void;
+  upgradeState: (log: (line: string) => void) => void;
 }
