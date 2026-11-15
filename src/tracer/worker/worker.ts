@@ -10,7 +10,7 @@ import type {
   WorkerOptions,
 } from "../models.js";
 import { SNAPSHOT_VERSION } from "../snapshot/snapshot-constants.js";
-import { releaseLock, takeLock } from "./lock.js";
+import { releaseLock, takeLock, takeLockFromOlder } from "./lock.js";
 import { NotesFollower } from "../notes/notes.js";
 import { positionNote, readPass, snapshotOf } from "./session.js";
 import {
@@ -181,7 +181,10 @@ class TracerWorker {
       notes: this.notes.bookmark(),
     };
     this.unsaved = false;
-    this.attempt("could not save the snapshot", () => this.options.snapshots.save(this.saved));
+    this.attempt("could not save the snapshot", () => {
+      this.options.snapshots.save(this.saved);
+      this.notes.removeSettled();
+    });
   }
 
   private shouldExit(): boolean {
@@ -231,7 +234,7 @@ class TracerWorker {
 
 export async function runWorker(options: WorkerOptions): Promise<void> {
   mkdirSync(options.paths.folder, { recursive: true, mode: TRACER_FOLDER_MODE });
-  if (!takeLock(options.paths.lock, options.version)) return;
+  if (!(await takeLockFromOlder(options.paths.lock, options.version))) return;
   const worker = new TracerWorker(options);
   const stopped = worker.stopped();
   try {

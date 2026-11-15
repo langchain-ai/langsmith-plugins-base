@@ -136,6 +136,14 @@ it("does not read subagent lines written after a Stop before the Stop", async ()
   expect((await recorded(box, 6)).slice(3)).toEqual(["s line L2", "s note Stop", "s line S2"]);
 });
 
+it("reads a subagent found during a read up to a note before delivering it", async () => {
+  const box = sandbox();
+  writeFileSync(box.main, transcriptLine("L1", { subagent: box.subagent }));
+  writeFileSync(box.subagent, transcriptLine("S1"));
+  hook(box, note(box, "Stop"));
+  expect(await recorded(box, 3)).toEqual(["s line L1", "s line S1", "s note Stop"]);
+});
+
 it("delivers a note whose transcript size fell in the middle of a line", async () => {
   const box = sandbox();
   writeFileSync(box.main, "");
@@ -228,15 +236,13 @@ it("hands off from an older worker to the newer plugin's worker", async () => {
   await waitFor(() => startedWorkers(box) === 1);
   hook(box, note(box, "Start"), true, "1.10.0");
   await once(older, "exit");
-  expect(existsSync(box.paths.lock)).toBe(false);
-  hook(box, note(box, "Next"), true, "1.10.0");
   const newer = await waitFor(
     () => existsSync(box.paths.lock) && JSON.parse(readFileSync(box.paths.lock, "utf8")),
   );
   expect(newer.version).toBe("1.10.0");
-  expect(await recorded(box, 2)).toEqual(["s note Start", "s note Next"]);
+  await once(startWorker(box, "1.10.0"), "exit");
   hook(box, note(box, "FromOlderPlugin"), true, "1.9.0");
-  await recorded(box, 3);
+  expect(await recorded(box, 2)).toEqual(["s note Start", "s note FromOlderPlugin"]);
   await delay(TICK_MS * 2);
   expect(lockPid(box.paths.lock)).toBe(newer.pid);
 });
