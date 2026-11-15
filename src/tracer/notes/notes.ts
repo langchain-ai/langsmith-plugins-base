@@ -25,6 +25,7 @@ export class NotesFollower {
   private base = 0;
   private offset = 0;
   private readonly rotated: RotatedNotes[] = [];
+  private readonly settled: string[] = [];
 
   constructor(
     private readonly notes: string,
@@ -70,7 +71,7 @@ export class NotesFollower {
     this.base = bookmark.base;
     for (const leftover of this.leftovers()) {
       this.readFrom(leftover.path, Math.max(0, position - leftover.base));
-      removeFile(leftover.path);
+      this.settled.push(leftover.path);
       this.base = Math.max(this.base, leftover.nextBase);
     }
     this.offset = Math.max(0, position - this.base);
@@ -104,9 +105,13 @@ export class NotesFollower {
       next = this.rotated[0]
     ) {
       this.readFrom(next.path, next.offset);
-      removeFile(next.path);
+      this.settled.push(next.path);
       this.rotated.shift();
     }
+  }
+
+  removeSettled(): void {
+    for (const path of this.settled.splice(0)) removeFile(path);
   }
 
   bookmark(): NotesBookmark {
