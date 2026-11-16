@@ -1,4 +1,4 @@
-import type { Endpoints, TypingPace } from "./models.ts";
+import type { AgentName, Endpoints, TypingPace } from "./models.ts";
 
 export const DEV_ENDPOINT = "https://dev.api.smith.langchain.com";
 export const GATEWAY_URL = "https://gateway.smith.langchain.com";
@@ -34,6 +34,11 @@ export const RUN_QUERY_LIMIT = 100;
 export const STOP_EVENT = "Stop";
 export const PROMPT_EVENT = "UserPromptSubmit";
 export const PRE_TOOL_EVENT = "PreToolUse";
+export const POST_TOOL_EVENT = "PostToolUse";
+export const TOOL_START_EVENT: Record<AgentName, string> = {
+  claude: PRE_TOOL_EVENT,
+  codex: POST_TOOL_EVENT,
+};
 export const REPLAY_PERMISSION_MODE = "default";
 export const SUBAGENT_STOP_EVENT = "SubagentStop";
 export const SKILL_TOOL_NAME = "Skill";

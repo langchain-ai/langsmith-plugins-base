@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { claudePlan } from "./claude-plan.ts";
+import { TOOL_START_EVENT } from "../constants.ts";
 import { codexPlan } from "./codex-plan.ts";
 
 const claudeTranscript = [
@@ -457,6 +458,12 @@ describe("claudePlan", () => {
 });
 
 describe("codexPlan", () => {
+  it("emits the event that tool pacing waits on", () => {
+    expect(codexPlan(codexRollout).events.map((event) => event.payload.hook_event_name)).toContain(
+      TOOL_START_EVENT.codex,
+    );
+  });
+
   it("expects one turn per prompt with its tools and reply", () => {
     expect(codexPlan(codexRollout).turns).toEqual([
       {
