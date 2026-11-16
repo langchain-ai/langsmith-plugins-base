@@ -19,12 +19,12 @@ import { checkRuns } from "./check.ts";
 import {
   BUNDLED_BINARY_WARNING,
   FAKE_API_KEY,
-  PRE_TOOL_EVENT,
   PROMPT_EVENT,
   STOP_EVENT,
   SUBAGENT_FILE_PREFIX,
   SUBAGENT_METADATA_EXTENSION,
   SUBAGENTS_FOLDER,
+  TOOL_START_EVENT,
   TRANSCRIPT_EXTENSION,
   SESSION_TIMEOUT_MS,
   TURN_SETTLE_POLL_MS,
@@ -50,6 +50,7 @@ import type {
 import { claudePlan } from "./replay/claude-plan.ts";
 import { codexPlan } from "./replay/codex-plan.ts";
 import { pluginHookCommands, runHookCommand } from "./replay/hooks.ts";
+import { renamedTurns } from "./replay/rename.ts";
 import {
   closeUsageGroup,
   commandInGroup,
@@ -146,7 +147,7 @@ async function replaySession(
   const scenario: Scenario = {
     name: basename(file),
     files: {},
-    turns: plan.turns,
+    turns: renamedTurns(plan.turns, renamed),
     hooksPerTurn: { claude: [], codex: [] },
   };
   const server = await startFakeServer(scenario);
@@ -204,7 +205,7 @@ async function replaySession(
     written.set(event.agentId, Math.max(done, event.transcriptLines));
     if (event.payload.hook_event_name === PROMPT_EVENT && options.turnGapMs > 0)
       await sleep(options.turnGapMs);
-    if (event.payload.hook_event_name === PRE_TOOL_EVENT && options.toolGapMs > 0) {
+    if (event.payload.hook_event_name === TOOL_START_EVENT[agent] && options.toolGapMs > 0) {
       await sleep(Math.max(0, lastToolStart + options.toolGapMs - Date.now()));
       lastToolStart = Date.now();
     }
