@@ -18,3 +18,6 @@ export type LegacyImport = Pick<
   StartTracerOptions,
   "agentStateFolder" | "integration" | "createBuilder" | "readLegacySessions"
 >;
+
+export type LegacyGap = "missing" | "writerless" | "otherAccount" | "uploads" | "steps" | "turns";
+export type LegacyGaps = Record<LegacyGap, number>;
