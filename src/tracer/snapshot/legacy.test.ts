@@ -1,14 +1,22 @@
 import * as fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { expect, it, vi } from "vitest";
 import {
+  CHILD_ID,
   localEndpoint,
+  ROOT_ID,
+  runPatch,
   runPost,
   save,
   testBridge,
+  turnEvidence,
   writerFor,
 } from "../../test-support/tracing/lifecycle.js";
+import { tryAcquireFileLock } from "../../storage/index.js";
+import { workerLockPath } from "../../tracing/background-worker/paths.js";
+import { createReconstructionWorker } from "../../tracing/reconstruction/index.js";
 import type { TranscriptBuilder } from "../models.js";
 import { upgradeLegacyState } from "./legacy.js";
 import type { LegacySession } from "./snapshot-models.js";
@@ -66,9 +74,15 @@ const upgrade = (stateFolder: string, sessions: LegacySession[], warnings: strin
 async function queueOldRun(stateFolder: string) {
   const endpoint = await localEndpoint();
   const oldEngine = testBridge(join(stateFolder, "langsmith_engine"), endpoint.url);
-  await save(oldEngine, "turn", "event", runPost("root"));
-  return endpoint;
+  await save(oldEngine, ROOT_ID, "root", runPost("root"), turnEvidence("open", []));
+  return { endpoint, oldEngine, storageRoot: join(stateFolder, "langsmith_engine") };
 }
+
+const openTurn = { childRunIds: [], closureState: "open" } as const;
+const oldJob = { turnId: ROOT_ID, privacyMode: "full", turnEvidence: openTurn } as const;
+const session = { integration: "claude-code", sessionId: "session-1" } as const;
+const oldJobs = (storageRoot: string, bridge = testBridge(storageRoot, "http://127.0.0.1:9")) =>
+  createReconstructionWorker({ ...session, storageRoot, bridge, reconstruct: vi.fn() });
 
 const snapshotPath = (stateFolder: string) =>
   join(stateFolder, "langsmith_plugins_base", "snapshot.json");
@@ -89,7 +103,7 @@ it("imports the last day's sessions from their transcript's end with their own m
 
 it("skips a session with no writer and drops its old queue with a warning", async () => {
   const stateFolder = oldInstall();
-  const endpoint = await queueOldRun(stateFolder);
+  const { endpoint } = await queueOldRun(stateFolder);
   const { writer: _unknown, ...withoutWriter } = legacy("session-1", 1);
   const warnings: string[] = [];
   await upgrade(stateFolder, [withoutWriter], warnings);
@@ -102,21 +116,21 @@ it("skips a session with no writer and drops its old queue with a warning", asyn
   await endpoint.close();
 });
 
-it("drops the old queue of a session missing from the old state with a warning", async () => {
+it("drops the old jobs of a session missing from the old state with a warning", async () => {
   const stateFolder = oldInstall();
-  const endpoint = await queueOldRun(stateFolder);
+  const jobs = oldJobs(join(stateFolder, "langsmith_engine"));
+  await jobs.enqueue({ ...oldJob, eventId: "call", sourceRefs: ["call"] });
   const warnings: string[] = [];
   await upgrade(stateFolder, [], warnings);
   expect(warnings).toEqual([
     "dropped 1 queued uploads from 1 old sessions: 1 missing from the old state, 0 with tracing off or no known destination, 0 recorded under another account",
   ]);
   expect(fs.readdirSync(stateFolder)).toEqual(["langsmith_plugins_base"]);
-  await endpoint.close();
 });
 
 it("drops old queued runs recorded under another account than the session's writer", async () => {
   const stateFolder = oldInstall();
-  const endpoint = await queueOldRun(stateFolder);
+  const { endpoint } = await queueOldRun(stateFolder);
   const warnings: string[] = [];
   const otherAccount = writerFor(endpoint.url, "another-key");
   await upgrade(stateFolder, [legacy("session-1", 1, { writer: otherAccount })], warnings);
@@ -128,18 +142,57 @@ it("drops old queued runs recorded under another account than the session's writ
   await endpoint.close();
 });
 
-it("sends the old engine's queued runs before purging its folder", async () => {
+it("sends queued tool runs and closes each old turn the old version never finished", async () => {
   const stateFolder = oldInstall();
-  const endpoint = await queueOldRun(stateFolder);
-  await upgrade(stateFolder, [legacy("session-1", 1, { writer: writerFor(endpoint.url) })]);
-  expect(endpoint.requests).toHaveLength(1);
+  const { endpoint, oldEngine, storageRoot } = await queueOldRun(stateFolder);
+  const jobs = oldJobs(storageRoot, oldEngine);
+  await jobs.enqueue({ ...oldJob, eventId: "call", sourceRefs: ["call"] });
+  const end = "2026-10-10T12:00:05.000Z";
+  const submission = runPost("child", { run: { end_time: end } });
+  const sourceSnapshots = [{ sourceRef: CHILD_ID, submission, sourceAgeStartedAtMs: Date.now() }];
+  await jobs.enqueue({ ...oldJob, eventId: "tool", sourceRefs: [CHILD_ID], sourceSnapshots });
+  const warnings: string[] = [];
+  const sendTo = writerFor(endpoint.url);
+  await upgrade(stateFolder, [legacy("session-1", 1, { writer: sendTo })], warnings);
+  const sent = endpoint.requests.map(({ method, payload: run }) =>
+    [method, run["id"], run["end_time"], run["error"]].join(" "),
+  );
+  expect(new Set(sent)).toEqual(
+    new Set([
+      `POST ${ROOT_ID}  `,
+      `POST ${CHILD_ID}  `,
+      `PATCH ${ROOT_ID} ${end} closed by the upgrade before its model calls were rebuilt`,
+      `PATCH ${CHILD_ID} ${end} `,
+    ]),
+  );
+  expect(warnings).toEqual([
+    "closed 1 old turns early and dropped 1 queued steps, such as model calls, that only the old version could rebuild",
+  ]);
   expect(fs.readdirSync(stateFolder)).toEqual(["langsmith_plugins_base"]);
+  await endpoint.close();
+});
+
+it("lets a running old worker finish its turn before the upgrade closes what is left", async () => {
+  const stateFolder = oldInstall();
+  const { endpoint, oldEngine, storageRoot } = await queueOldRun(stateFolder);
+  const { accountFingerprint } = oldEngine;
+  const lock = workerLockPath(storageRoot, { ...session, accountFingerprint });
+  const oldWorker = await tryAcquireFileLock(lock);
+  const warnings: string[] = [];
+  const sendTo = writerFor(endpoint.url);
+  const upgrading = upgrade(stateFolder, [legacy("session-1", 1, { writer: sendTo })], warnings);
+  await delay(200);
+  const end = runPatch("root", { end_time: "2026-10-10T12:00:09.000Z" });
+  await save(oldEngine, ROOT_ID, "end", end, turnEvidence("authoritative", []));
+  await oldWorker?.release();
+  await upgrading;
+  expect(warnings).toEqual([]);
   await endpoint.close();
 });
 
 it("keeps the old folder to retry later when its queue cannot be sent", async () => {
   const stateFolder = oldInstall();
-  const endpoint = await queueOldRun(stateFolder);
+  const { endpoint } = await queueOldRun(stateFolder);
   await endpoint.close();
   await upgrade(stateFolder, [legacy("session-1", 1, { writer: writerFor(endpoint.url) })]);
   expect(fs.readdirSync(stateFolder).toSorted()).toEqual([
