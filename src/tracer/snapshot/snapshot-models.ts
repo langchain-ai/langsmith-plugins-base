@@ -6,12 +6,21 @@ export interface LoadedSnapshot {
   problem?: string;
 }
 
+export interface LegacyOpenTurn {
+  rootRunId: string;
+  afterLineId?: string;
+  fromStart?: boolean;
+  builderState?: unknown;
+}
+
 export interface LegacySession {
   sessionId: string;
   transcriptPath: string;
   updatedAt: number;
   tracingMode?: TracingMode;
   writer?: LangSmithUploadWriterOptions;
+  recover?: () => Promise<void>;
+  openTurn?: LegacyOpenTurn | undefined;
 }
 
 export type LegacyImport = Pick<
@@ -19,5 +28,6 @@ export type LegacyImport = Pick<
   "agentStateFolder" | "integration" | "createBuilder" | "readLegacySessions"
 >;
 
-export type LegacyGap = "missing" | "writerless" | "otherAccount" | "uploads" | "steps" | "turns";
-export type LegacyGaps = Record<LegacyGap, number>;
+export type LegacyRecovery = Required<Pick<LegacySession, "sessionId" | "writer" | "recover">> &
+  Pick<LegacySession, "openTurn">;
+export type LegacyDropped = Record<"missing" | "writerless" | "otherAccount" | "uploads", number>;

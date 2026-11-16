@@ -8,9 +8,5 @@ export const LEGACY_ENGINE_FOLDER = "langsmith_engine";
 export const LEGACY_STATE_FILE = "langsmith_state.json";
 export const LEGACY_QUEUE_WAIT_MS = 30_000;
 export const LEGACY_DROPPED_WARNING =
-  "dropped {uploads} queued uploads from {sessions} old sessions: {missing} missing from the old state, {writerless} with tracing off or no known destination, {otherAccount} recorded under another account";
-export const LEGACY_UNREBUILT_WARNING =
-  "closed {turns} old turns early and dropped {steps} queued steps, such as model calls, that only the old version could rebuild";
-export const LEGACY_CLOSED_TURN_ERROR = "closed by the upgrade before its model calls were rebuilt";
-export const LEGACY_EVENT_PREFIX = "upgrade:";
+  "dropped {uploads} queued uploads from {sessions} old sessions: {missing} missing from the old state, {writerless} with tracing off, no known destination or no old rebuild code, {otherAccount} recorded under another account";
 export const IGNORED_RUNS: RunSink = { post: () => undefined, patch: () => undefined };
