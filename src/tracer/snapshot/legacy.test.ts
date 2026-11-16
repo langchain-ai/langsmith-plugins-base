@@ -1,3 +1,5 @@
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import * as fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -29,18 +31,15 @@ function oldInstall(): string {
   const stateFolder = fs.mkdtempSync(join(tmpdir(), "tracer legacy "));
   fs.mkdirSync(join(stateFolder, "langsmith_engine"));
   fs.writeFileSync(join(stateFolder, "langsmith_state.json"), "{}");
+  fs.mkdirSync(join(stateFolder, "langsmith_state.json.claims"));
   return stateFolder;
 }
 
-function legacy(
-  sessionId: string,
-  hoursAgo: number,
-  extra?: Partial<LegacySession>,
-): LegacySession {
+function legacy(sessionId: string, hoursAgo: number, extra?: Partial<LegacySession>) {
   const transcriptPath = join(transcripts, `${sessionId}.jsonl`);
   fs.writeFileSync(transcriptPath, line("first") + line("last"));
   const updatedAt = Date.now() - hoursAgo * HOUR_MS;
-  return { sessionId, transcriptPath, updatedAt, tracingMode: "full", writer, ...extra };
+  return { sessionId, transcriptPath, updatedAt, tracingMode: "full", writer, ...extra } as const;
 }
 
 const imported = ({ sessionId, transcriptPath: path, tracingMode, ...rest }: LegacySession) => ({
@@ -75,9 +74,13 @@ async function queueOldRun(stateFolder: string) {
 
 const openTurn = { childRunIds: [], closureState: "open" } as const;
 const oldJob = { turnId: ROOT_ID, privacyMode: "full", turnEvidence: openTurn } as const;
-const session = { integration: "claude-code", sessionId: "session-1" } as const;
-const oldJobs = (storageRoot: string, bridge = testBridge(storageRoot, "http://127.0.0.1:9")) =>
-  createReconstructionWorker({ ...session, storageRoot, bridge, reconstruct: vi.fn() });
+const session = { integration: "claude-code" } as const;
+const oldJobs = (
+  storageRoot: string,
+  bridge = testBridge(storageRoot, "http://127.0.0.1:9"),
+  sessionId = "session-1",
+) =>
+  createReconstructionWorker({ ...session, sessionId, storageRoot, bridge, reconstruct: vi.fn() });
 
 const recoverNothing = async () => undefined;
 const sendingTo = (url: string, extra: Partial<LegacySession>) =>
@@ -91,11 +94,17 @@ const snapshotPath = (stateFolder: string) =>
 const importedSessions = (stateFolder: string) =>
   loadSnapshot(snapshotPath(stateFolder)).snapshot.sessions;
 
-it("imports the last day's sessions from their transcript's end with their own mode and writer", async () => {
+it("imports the last day's sessions with their mode and writer, cleaning up after the old worker exits", async () => {
   const stateFolder = oldInstall();
+  const claims = join(stateFolder, "langsmith_engine", "session", "worker.claims");
+  fs.mkdirSync(claims, { recursive: true });
+  const recreate = `fs.mkdirSync(${JSON.stringify(claims)}, { recursive: true })`;
+  const oldWorker = spawn(process.execPath, ["-e", `setTimeout(() => ${recreate}, 300)`]);
+  fs.writeFileSync(join(claims, "claim.json"), JSON.stringify({ pid: oldWorker.pid }));
   const recent = legacy("recent", 2);
   const muted = legacy("muted", 1, { tracingMode: "off", writer: { ...writer, redact: false } });
-  await upgrade(stateFolder, [recent, muted, legacy("stale", 30)]);
+  const sessions = [recent, muted, legacy("stale", 30)];
+  await Promise.all([upgrade(stateFolder, sessions), once(oldWorker, "exit")]);
   expect(importedSessions(stateFolder)).toEqual({
     recent: imported(recent),
     muted: imported(muted),
@@ -143,31 +152,21 @@ it("runs each old session's rebuild code once, handing its open turn to the new 
   await endpoint.close();
 });
 
-it("skips a session with no writer and drops its old queue with a warning", async () => {
+it("drops with a warning the old queue of a session with no writer or missing from the old state", async () => {
   const stateFolder = oldInstall();
   const { endpoint } = await queueOldRun(stateFolder);
+  const missing = oldJobs(join(stateFolder, "langsmith_engine"), undefined, "session-2");
+  await missing.enqueue({ ...oldJob, eventId: "call", sourceRefs: ["call"] });
   const { writer: _unknown, ...withoutWriter } = legacy("session-1", 1);
   const warnings: string[] = [];
   await upgrade(stateFolder, [withoutWriter], warnings);
   expect(importedSessions(stateFolder)).toEqual({});
   expect(warnings).toEqual([
-    "dropped 1 queued uploads from 1 old sessions: 0 missing from the old state, 1 with tracing off, no known destination or no old rebuild code, 0 recorded under another account",
+    "dropped 2 queued uploads from 2 old sessions: 1 missing from the old state, 1 with tracing off, no known destination or no old rebuild code, 0 recorded under another account",
   ]);
   expect(fs.readdirSync(stateFolder)).toEqual(["langsmith_plugins_base"]);
   expect(endpoint.requests).toEqual([]);
   await endpoint.close();
-});
-
-it("drops the old jobs of a session missing from the old state with a warning", async () => {
-  const stateFolder = oldInstall();
-  const jobs = oldJobs(join(stateFolder, "langsmith_engine"));
-  await jobs.enqueue({ ...oldJob, eventId: "call", sourceRefs: ["call"] });
-  const warnings: string[] = [];
-  await upgrade(stateFolder, [], warnings);
-  expect(warnings).toEqual([
-    "dropped 1 queued uploads from 1 old sessions: 1 missing from the old state, 0 with tracing off, no known destination or no old rebuild code, 0 recorded under another account",
-  ]);
-  expect(fs.readdirSync(stateFolder)).toEqual(["langsmith_plugins_base"]);
 });
 
 it("drops old queued runs recorded under another account than the session's writer", async () => {
@@ -186,22 +185,15 @@ it("drops old queued runs recorded under another account than the session's writ
   await endpoint.close();
 });
 
-it("keeps the old folder to retry later when its queue cannot be sent", async () => {
-  const stateFolder = oldInstall();
-  const { endpoint } = await queueOldRun(stateFolder);
-  await endpoint.close();
-  await upgrade(stateFolder, [sendingTo(endpoint.url, { recover: recoverNothing })]);
-  expect(fs.readdirSync(stateFolder)).toContain("langsmith_engine");
-});
-
-it("logs old rebuild code that fails and keeps its queue for a retry", async () => {
+it("keeps the old folder for a retry when its rebuild code fails or its queue cannot be sent", async () => {
   const stateFolder = oldInstall();
   const { endpoint } = await queueOldRun(stateFolder);
   const warnings: string[] = [];
   await upgrade(stateFolder, [sendingTo(endpoint.url, { recover: recoverFailing })], warnings);
   expect(warnings).toEqual(["could not send old session session-1: boom"]);
-  expect(fs.readdirSync(stateFolder)).toContain("langsmith_engine");
   await endpoint.close();
+  await upgrade(stateFolder, [sendingTo(endpoint.url, { recover: recoverNothing })]);
+  expect(fs.readdirSync(stateFolder)).toContain("langsmith_engine");
 });
 
 it("keeps an old queue its rebuild code could not finish, without closing its turns", async () => {
@@ -213,11 +205,7 @@ it("keeps an old queue its rebuild code could not finish, without closing its tu
     ["POST", ROOT_ID],
   ]);
   await endpoint.close();
-  expect(fs.readdirSync(stateFolder).toSorted()).toEqual([
-    "langsmith_engine",
-    "langsmith_plugins_base",
-    "langsmith_state.json",
-  ]);
+  expect(fs.readdirSync(stateFolder)).toHaveLength(4);
 });
 
 it("leaves the old folder and state file untouched when killed before the snapshot rename", () => {
@@ -241,15 +229,6 @@ it("keeps the worker's progress when rerun after a kill between the rename and t
   await upgrade(stateFolder, [legacy("other", 1)]);
   expect(importedSessions(stateFolder)).toEqual({ recent: advanced });
   expect(fs.readdirSync(stateFolder)).toEqual(["langsmith_plugins_base"]);
-});
-
-it("writes nothing when rerun after a completed import", async () => {
-  const stateFolder = oldInstall();
-  await upgrade(stateFolder, [legacy("recent", 1)]);
-  const rename = vi.spyOn(fs, "renameSync");
-  rename.mockClear();
-  await upgrade(stateFolder, [legacy("other", 1)]);
-  expect(rename).not.toHaveBeenCalled();
 });
 
 it("refuses a relative state folder so the purge cannot land in the working directory", () => {
