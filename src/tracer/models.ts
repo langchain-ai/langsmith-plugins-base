@@ -49,15 +49,10 @@ export interface RunPost {
   tracingMode: TracingMode;
 }
 
-export type RunPatch = Pick<
-  RunPost,
-  "id" | "name" | "run_type" | "trace_id" | "dotted_order" | "metadata" | "tracingMode"
-> &
-  Partial<
-    Omit<
-      RunPost,
-      "id" | "name" | "run_type" | "trace_id" | "dotted_order" | "metadata" | "tracingMode"
-    >
+export type RunPatch = Partial<RunPost> &
+  Pick<
+    RunPost,
+    "id" | "name" | "run_type" | "trace_id" | "dotted_order" | "metadata" | "tracingMode"
   >;
 
 export interface RunSink {

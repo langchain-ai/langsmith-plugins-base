@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import type { CodingAgentIntegration } from "../../metadata/models.js";
@@ -8,6 +8,9 @@ import {
 } from "../../storage/capture/constants.js";
 import { createCaptureStore } from "../../storage/capture/index.js";
 import { scopeOf } from "../../storage/capture/scope.js";
+import { FILE_LOCK_DIRECTORY_SUFFIX, FILE_LOCK_POLL_INTERVAL_MS } from "../../storage/constants.js";
+import { processIsAlive } from "../../storage/file-lock-support.js";
+import type { FileLockClaim } from "../../storage/models.js";
 import { LIFECYCLE_POST_EVENT_KIND } from "../../tracing/lifecycle/constants.js";
 import { createLifecycleBridge } from "../../tracing/lifecycle/index.js";
 import { describe } from "../../utils/errors.js";
@@ -152,6 +155,29 @@ async function sendOldQueue(
   return sent;
 }
 
+function lockHolders(folder: string): number[] | undefined {
+  try {
+    return readdirSync(folder, { recursive: true, withFileTypes: true })
+      .filter((entry) => entry.isFile() && entry.parentPath.endsWith(FILE_LOCK_DIRECTORY_SUFFIX))
+      .map(({ parentPath, name }) => readFileSync(join(parentPath, name), "utf8"))
+      .map((claim) => (JSON.parse(claim) as FileLockClaim).pid);
+  } catch {
+    return existsSync(folder) ? undefined : [];
+  }
+}
+
+async function oldWorkersStopped(folders: string[]): Promise<true> {
+  const holders = new Set<number>();
+  for (;;) {
+    const scans = folders.map((folder) => lockHolders(folder));
+    for (const pid of scans.flat()) if (pid !== undefined) holders.add(pid);
+    for (const pid of holders)
+      if (pid === process.pid || processIsAlive(pid) !== true) holders.delete(pid);
+    if (holders.size === 0 && !scans.includes(undefined)) return true;
+    await delay(FILE_LOCK_POLL_INTERVAL_MS);
+  }
+}
+
 export function upgradeLegacyState(
   options: LegacyImport,
   log: (line: string) => void,
@@ -168,11 +194,15 @@ export function upgradeLegacyState(
   const sessions = existsSync(legacyState) ? options.readLegacySessions(legacyState) : [];
   if (!existsSync(paths.snapshot)) importSessions(options, sessions, paths);
   const integration = options.integration as CodingAgentIntegration;
-  const sending = sendOldQueue(legacyEngine, integration, sessions, log).catch(() => false);
+  const stateClaims = `${legacyState}${FILE_LOCK_DIRECTORY_SUFFIX}`;
+  const sending = sendOldQueue(legacyEngine, integration, sessions, log)
+    .then((sent) => sent && oldWorkersStopped([legacyEngine, stateClaims]))
+    .catch(() => false);
   const timeout = delay(LEGACY_QUEUE_WAIT_MS, false, { ref: false });
   return Promise.race([sending, timeout]).then((sent) => {
     if (!sent) return;
     rmSync(legacyEngine, { recursive: true, force: true });
     rmSync(legacyState, { force: true });
+    rmSync(stateClaims, { recursive: true, force: true });
   });
 }
