@@ -1,28 +1,19 @@
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import type { CodingAgentIntegration, CodingAgentMetadataOptions } from "../../metadata/models.js";
+import type { CodingAgentIntegration } from "../../metadata/models.js";
 import {
   CAPTURE_JOBS_DIRECTORY,
   CAPTURE_TURNS_DIRECTORY,
 } from "../../storage/capture/constants.js";
 import { createCaptureStore } from "../../storage/capture/index.js";
-import type { CaptureDirectory, StoredCapture } from "../../storage/capture/models.js";
-import { withFileLock } from "../../storage/index.js";
-import { workerLockPath } from "../../tracing/background-worker/paths.js";
+import { scopeOf } from "../../storage/capture/scope.js";
+import { FILE_LOCK_DIRECTORY_SUFFIX, FILE_LOCK_POLL_INTERVAL_MS } from "../../storage/constants.js";
+import { processIsAlive } from "../../storage/file-lock-support.js";
+import type { FileLockClaim } from "../../storage/models.js";
+import { LIFECYCLE_POST_EVENT_KIND } from "../../tracing/lifecycle/constants.js";
 import { createLifecycleBridge } from "../../tracing/lifecycle/index.js";
-import type {
-  LifecycleBridge,
-  LifecycleCaptureInput,
-  LifecycleTurnEvidence,
-} from "../../tracing/lifecycle/models.js";
-import type { ReconstructionJob } from "../../tracing/reconstruction/index.js";
-import type {
-  LangSmithUploadWriterOptions,
-  NormalizedRunSnapshot,
-  PreparedRunPatchSubmission,
-  PreparedRunPostSubmission,
-} from "../../tracing/upload/models.js";
+import { describe } from "../../utils/errors.js";
 import { fillTemplate } from "../../utils/format.js";
 import { TRACER_FOLDER_MODE } from "../constants.js";
 import type { Bookmark, TracerPaths, TranscriptBuilder } from "../models.js";
@@ -30,16 +21,19 @@ import { tracerPaths } from "../paths.js";
 import { readNewLines } from "../reader/reader.js";
 import {
   IGNORED_RUNS,
-  LEGACY_CLOSED_TURN_ERROR,
   LEGACY_DROPPED_WARNING,
   LEGACY_ENGINE_FOLDER,
-  LEGACY_EVENT_PREFIX,
   LEGACY_IMPORT_WINDOW_MS,
   LEGACY_QUEUE_WAIT_MS,
   LEGACY_STATE_FILE,
-  LEGACY_UNREBUILT_WARNING,
 } from "./snapshot-constants.js";
-import type { LegacyGaps, LegacyImport, LegacySession } from "./snapshot-models.js";
+import type {
+  LegacyDropped,
+  LegacyImport,
+  LegacyOpenTurn,
+  LegacyRecovery,
+  LegacySession,
+} from "./snapshot-models.js";
 import { loadSnapshot, writeSnapshot } from "./snapshot.js";
 
 function transcriptEnd(path: string, lineId: TranscriptBuilder["lineId"]): Bookmark {
@@ -47,23 +41,36 @@ function transcriptEnd(path: string, lineId: TranscriptBuilder["lineId"]): Bookm
   for (;;) if (readNewLines(bookmark, lineId).reachedEnd) return bookmark;
 }
 
+function openTurnStart(path: string, lineId: TranscriptBuilder["lineId"], turn: LegacyOpenTurn) {
+  if (turn.fromStart) return { path, offset: 0 };
+  if (turn.afterLineId === undefined) return transcriptEnd(path, lineId);
+  const bookmark: Bookmark = { path, offset: 0 };
+  for (;;) {
+    const { lines, reachedEnd } = readNewLines(bookmark, lineId);
+    const after = lines.find(({ line }) => lineId(line) === turn.afterLineId);
+    if (after !== undefined) return { path, offset: after.end, lastLineId: turn.afterLineId };
+    if (reachedEnd) return undefined;
+  }
+}
+
 function importSessions(options: LegacyImport, sessions: LegacySession[], paths: TracerPaths) {
   const saved = loadSnapshot(paths.snapshot).snapshot;
   const cutoff = Date.now() - LEGACY_IMPORT_WINDOW_MS;
-  for (const { sessionId, transcriptPath, updatedAt, tracingMode, writer } of sessions) {
+  for (const { sessionId, transcriptPath, updatedAt, tracingMode, writer, openTurn } of sessions) {
     if (updatedAt < cutoff || writer === undefined) continue;
     const { lineId } = options.createBuilder({
       sessionId,
       savedState: undefined,
       sink: IGNORED_RUNS,
     });
+    const resume = openTurn && openTurnStart(transcriptPath, lineId, openTurn);
     saved.sessions[sessionId] = {
       sessionId,
       integration: options.integration,
       writer,
-      bookmarks: { [transcriptPath]: transcriptEnd(transcriptPath, lineId) },
+      bookmarks: { [transcriptPath]: resume ?? transcriptEnd(transcriptPath, lineId) },
       pendingNotes: [],
-      builderState: undefined,
+      builderState: resume === undefined ? undefined : openTurn?.builderState,
       tracingMode,
       ended: false,
     };
@@ -72,81 +79,42 @@ function importSessions(options: LegacyImport, sessions: LegacySession[], paths:
   writeSnapshot(paths.snapshot, saved);
 }
 
-const endTimeOf = ({ normalizedPayload }: StoredCapture) => {
-  const payload = normalizedPayload as Partial<PreparedRunPatchSubmission>;
-  return (payload.run as NormalizedRunSnapshot).end_time ?? payload.patch?.values.end_time;
-};
-
-async function sendQueuedSteps(bridge: LifecycleBridge, jobs: StoredCapture[], gaps: LegacyGaps) {
-  for (const { turnId, normalizedPayload, turnEvidence } of jobs) {
-    const { sourceSnapshots = [] } = normalizedPayload as Partial<ReconstructionJob>;
-    if (sourceSnapshots.length === 0) gaps.steps += 1;
-    for (const { submission, sourceAgeStartedAtMs } of sourceSnapshots) {
-      const eventId = `${LEGACY_EVENT_PREFIX}${submission.run.id}`;
-      const step = { turnId, eventId, submission, turnEvidence, sourceAgeStartedAtMs };
-      await bridge.capture(step as unknown as LifecycleCaptureInput);
-    }
-  }
-}
-
-async function closeOpenTurns(bridge: LifecycleBridge, records: StoredCapture[], gaps: LegacyGaps) {
-  for (const root of records) {
-    if ((root.turnEvidence as unknown as LifecycleTurnEvidence).rootRunId !== root.runId) continue;
-    const turn = records.filter((record) => record.turnId === root.turnId);
-    if (turn.some((record) => record.runId === root.runId && endTimeOf(record))) continue;
-    const { privacyMode, run } = root.normalizedPayload as unknown as PreparedRunPostSubmission;
-    const times = [run.start_time, ...turn.map(endTimeOf)].filter((time) => time !== undefined);
-    const end_time = new Date(Math.max(...times.map((time) => new Date(time).getTime())));
-    const { inputs: _inputs, outputs: _outputs, ...context } = run;
-    gaps.turns += 1;
-    await bridge.capture({
-      turnId: root.turnId,
-      eventId: `${LEGACY_EVENT_PREFIX}${root.runId}`,
-      submission: {
-        integration: root.integration as CodingAgentIntegration,
-        privacyMode,
-        metadata: root.metadataProvenance as unknown as CodingAgentMetadataOptions,
-        operation: "patch",
-        run: context,
-        privacyContext: { status: "error" },
-        patch: {
-          fields: ["end_time", "error"],
-          values: { end_time: end_time.toISOString(), error: LEGACY_CLOSED_TURN_ERROR },
-        },
-      },
-      turnEvidence: {
-        rootRunId: root.runId,
-        childRunIds: [...new Set(turn.map(({ runId }) => runId))].filter((id) => id !== root.runId),
-        closureState: "authoritative",
-      },
-    });
+async function handOverOpenTurn(
+  storageRoot: string,
+  integration: CodingAgentIntegration,
+  sessionId: string,
+  rootRunId: string,
+) {
+  for (const directory of [CAPTURE_TURNS_DIRECTORY, CAPTURE_JOBS_DIRECTORY] as const) {
+    const store = createCaptureStore(storageRoot, directory);
+    for (const { record } of await store.enumerateTurn(integration, sessionId, rootRunId))
+      if (record.runId !== rootRunId || record.eventKind !== LIFECYCLE_POST_EVENT_KIND)
+        await store.remove(scopeOf(record));
   }
 }
 
 async function sendOldSession(
   storageRoot: string,
   integration: CodingAgentIntegration,
-  sessionId: string,
-  writer: LangSmithUploadWriterOptions,
-  gaps: LegacyGaps,
+  { sessionId, writer, recover, openTurn }: LegacyRecovery,
+  dropped: LegacyDropped,
 ): Promise<boolean> {
+  if (openTurn !== undefined)
+    await handOverOpenTurn(storageRoot, integration, sessionId, openTurn.rootRunId);
+  await recover();
   const bridge = createLifecycleBridge({ storageRoot, integration, sessionId, writer });
-  const queued = async (directory: CaptureDirectory) =>
-    (await createCaptureStore(storageRoot, directory).enumerate(integration, sessionId))
-      .map(({ record }) => record)
-      .filter((record) => record.destinationFingerprint === bridge.accountFingerprint);
-  const send = async () => {
-    await sendQueuedSteps(bridge, await queued(CAPTURE_JOBS_DIRECTORY), gaps);
-    await closeOpenTurns(bridge, await queued(CAPTURE_TURNS_DIRECTORY), gaps);
-    const result = await bridge.drain();
-    if (result.status !== "drained" || result.pending > 0) return false;
-    gaps.otherAccount += Number(result.accountMismatch > 0);
-    gaps.uploads += result.accountMismatch;
-    return true;
-  };
-  const scope = { integration, sessionId, accountFingerprint: bridge.accountFingerprint };
-  const wait = { timeoutMs: LEGACY_QUEUE_WAIT_MS };
-  return withFileLock(workerLockPath(storageRoot, scope), send, wait).catch(() => false);
+  const result = await bridge.drain();
+  const account = bridge.accountFingerprint;
+  const jobs = await createCaptureStore(storageRoot, CAPTURE_JOBS_DIRECTORY).enumerate(
+    integration,
+    sessionId,
+  );
+  const ownJobs = jobs.filter(({ record }) => record.destinationFingerprint === account);
+  if (result.status !== "drained" || result.pending > 0 || ownJobs.length > 0) return false;
+  const otherAccount = result.accountMismatch + jobs.length;
+  dropped.otherAccount += Number(otherAccount > 0);
+  dropped.uploads += otherAccount;
+  return true;
 }
 
 async function sendOldQueue(
@@ -157,7 +125,7 @@ async function sendOldQueue(
 ): Promise<boolean> {
   if (!existsSync(storageRoot)) return true;
   let sent = true;
-  const gaps = { missing: 0, writerless: 0, otherAccount: 0, uploads: 0, steps: 0, turns: 0 };
+  const dropped = { missing: 0, writerless: 0, otherAccount: 0, uploads: 0 };
   const queued = new Map<string, number>();
   for (const directory of [CAPTURE_TURNS_DIRECTORY, CAPTURE_JOBS_DIRECTORY] as const) {
     const store = createCaptureStore(storageRoot, directory);
@@ -166,18 +134,48 @@ async function sendOldQueue(
   }
   for (const [sessionId, uploads] of queued) {
     const session = sessions.find((listed) => listed.sessionId === sessionId);
-    if (session?.writer === undefined) {
-      gaps[session === undefined ? "missing" : "writerless"] += 1;
-      gaps.uploads += uploads;
-    } else
-      sent =
-        (await sendOldSession(storageRoot, integration, sessionId, session.writer, gaps)) && sent;
+    const { writer, recover, openTurn } = session ?? {};
+    if (writer === undefined || recover === undefined) {
+      dropped[session === undefined ? "missing" : "writerless"] += 1;
+      dropped.uploads += uploads;
+      continue;
+    }
+    const recovery = { sessionId, writer, recover, openTurn };
+    const done = await sendOldSession(storageRoot, integration, recovery, dropped).catch(
+      (error: unknown) => {
+        log(`could not send old session ${sessionId}: ${describe(error)}`);
+        return false;
+      },
+    );
+    sent = done && sent;
   }
-  const sessionCount = gaps.missing + gaps.writerless + gaps.otherAccount;
+  const sessionCount = dropped.missing + dropped.writerless + dropped.otherAccount;
   if (sessionCount > 0)
-    log(fillTemplate(LEGACY_DROPPED_WARNING, { ...gaps, sessions: sessionCount }));
-  if (gaps.turns + gaps.steps > 0) log(fillTemplate(LEGACY_UNREBUILT_WARNING, gaps));
+    log(fillTemplate(LEGACY_DROPPED_WARNING, { ...dropped, sessions: sessionCount }));
   return sent;
+}
+
+function lockHolders(folder: string): number[] | undefined {
+  try {
+    return readdirSync(folder, { recursive: true, withFileTypes: true })
+      .filter((entry) => entry.isFile() && entry.parentPath.endsWith(FILE_LOCK_DIRECTORY_SUFFIX))
+      .map(({ parentPath, name }) => readFileSync(join(parentPath, name), "utf8"))
+      .map((claim) => (JSON.parse(claim) as FileLockClaim).pid);
+  } catch {
+    return existsSync(folder) ? undefined : [];
+  }
+}
+
+async function oldWorkersStopped(folders: string[]): Promise<true> {
+  const holders = new Set<number>();
+  for (;;) {
+    const scans = folders.map((folder) => lockHolders(folder));
+    for (const pid of scans.flat()) if (pid !== undefined) holders.add(pid);
+    for (const pid of holders)
+      if (pid === process.pid || processIsAlive(pid) !== true) holders.delete(pid);
+    if (holders.size === 0 && !scans.includes(undefined)) return true;
+    await delay(FILE_LOCK_POLL_INTERVAL_MS);
+  }
 }
 
 export function upgradeLegacyState(
@@ -196,11 +194,15 @@ export function upgradeLegacyState(
   const sessions = existsSync(legacyState) ? options.readLegacySessions(legacyState) : [];
   if (!existsSync(paths.snapshot)) importSessions(options, sessions, paths);
   const integration = options.integration as CodingAgentIntegration;
-  const sending = sendOldQueue(legacyEngine, integration, sessions, log).catch(() => false);
+  const stateClaims = `${legacyState}${FILE_LOCK_DIRECTORY_SUFFIX}`;
+  const sending = sendOldQueue(legacyEngine, integration, sessions, log)
+    .then((sent) => sent && oldWorkersStopped([legacyEngine, stateClaims]))
+    .catch(() => false);
   const timeout = delay(LEGACY_QUEUE_WAIT_MS, false, { ref: false });
   return Promise.race([sending, timeout]).then((sent) => {
     if (!sent) return;
     rmSync(legacyEngine, { recursive: true, force: true });
     rmSync(legacyState, { force: true });
+    rmSync(stateClaims, { recursive: true, force: true });
   });
 }
