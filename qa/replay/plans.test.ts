@@ -296,6 +296,21 @@ describe("claudePlan", () => {
     expect([plan.turns.length, plan.turns[0]?.minTools, stops.length]).toEqual([1, 2, 1]);
   });
 
+  it("counts a peer message that arrives mid-turn as part of the running turn", () => {
+    const peer = {
+      type: "user",
+      isMeta: true,
+      origin: { kind: "peer" },
+      message: { content: "hi" },
+    };
+    const plan = claudePlan([
+      ...claudeTranscript.slice(0, 3),
+      peer,
+      ...claudeTranscript.slice(1, 4),
+    ]);
+    expect(plan.turns.map((turn) => [turn.prompt, turn.minTools])).toEqual([["list files", 2]]);
+  });
+
   it("expects a task notification's summary as its prompt", () => {
     const notice =
       "<task-notification>\n<task-id>b1</task-id>\n<summary> Build finished </summary>";

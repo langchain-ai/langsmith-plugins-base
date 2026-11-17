@@ -276,7 +276,7 @@ export function claudePlan(
         compact_summary: textOf(line.message?.content),
       });
     }
-    if (isPrompt(lines, index)) {
+    if (isPrompt(lines, index) && !(line.isMeta && current !== undefined)) {
       current = {
         prompt: promptText(line),
         command: "",
