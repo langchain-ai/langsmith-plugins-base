@@ -39,6 +39,7 @@ it("rereads lines a pending note held back after the real reader moved past them
       readLine: (_path, read) => applied.push(String(read.uuid)),
       receiveNote: (note) => applied.push(note.event),
       transcripts: () => [],
+      turnOpen: () => false,
       state: () => ({}),
     },
   };

@@ -67,6 +67,7 @@ export interface TranscriptBuilder {
   readLine: (transcriptPath: string, line: TranscriptLine) => void;
   receiveNote: (note: HookNote) => void;
   transcripts: () => string[];
+  turnOpen: () => boolean;
   state: () => unknown;
 }
 

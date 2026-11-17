@@ -135,3 +135,7 @@ export function readPass(
 export function snapshotOf({ builder, ...saved }: WorkerSession): SessionSnapshot {
   return { ...saved, builderState: builder.state() };
 }
+
+export function isIdle(session: WorkerSession): boolean {
+  return session.pendingNotes.length === 0 && !session.builder.turnOpen();
+}

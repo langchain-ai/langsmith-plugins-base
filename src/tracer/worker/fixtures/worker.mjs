@@ -27,6 +27,7 @@ await runWorker({
   createBuilder: ({ sessionId, tracingMode }) => {
     if (tracingMode !== undefined) write(`${sessionId} mode ${tracingMode}`);
     const subagents = new Set();
+    let stopped = false;
     return {
       lineId: (line) => line.uuid,
       readLine: (path, line) => {
@@ -34,8 +35,12 @@ await runWorker({
         if (line.subagent) subagents.add(line.subagent);
         if (line.fillsQueue) fs.writeFileSync(`${record}.full`, "");
       },
-      receiveNote: (note) => write(`${sessionId} note ${note.event}`),
+      receiveNote: (note) => {
+        write(`${sessionId} note ${note.event}`);
+        if (note.event === "Stop") stopped = true;
+      },
       transcripts: () => [...subagents],
+      turnOpen: () => !stopped,
       state: () => ({}),
     };
   },

@@ -173,6 +173,14 @@ it("exits after every session ends and removes its lock", async () => {
   await waitFor(() => !existsSync(box.paths.lock), "the worker to exit");
 });
 
+it("exits once every turn has stopped even when the session never ends", async () => {
+  const box = sandbox();
+  hook(box, note(box, "Start"));
+  hook(box, note(box, "Stop"));
+  await recorded(box, 2);
+  await waitFor(() => !existsSync(box.paths.lock), "the worker to exit");
+});
+
 it("pauses reading while the upload queue is full and reads every line once after", async () => {
   const box = sandbox();
   writeFileSync(`${box.record}.full`, "");

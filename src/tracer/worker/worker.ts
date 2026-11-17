@@ -24,7 +24,7 @@ import type {
 } from "../models.js";
 import { releaseLock, takeLock, takeLockFromOlder } from "./lock.js";
 import { NotesFollower } from "../notes/notes.js";
-import { positionNote, readPass, snapshotOf } from "./session.js";
+import { isIdle, positionNote, readPass, snapshotOf } from "./session.js";
 
 class TracerWorker {
   private readonly sessions = new Map<string, WorkerSession>();
@@ -200,7 +200,7 @@ class TracerWorker {
     return (
       this.stopRequested ||
       quiet >= ABANDONED_EXIT_MS ||
-      (quiet >= IDLE_EXIT_MS && this.sessions.size === 0 && !this.notes.unread())
+      (quiet >= IDLE_EXIT_MS && !this.notes.unread() && [...this.sessions.values()].every(isIdle))
     );
   }
 
