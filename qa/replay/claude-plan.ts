@@ -1,9 +1,11 @@
 import {
+  CLAUDE_LOCAL_COMMAND_SUBTYPE,
   CLAUDE_LOCAL_OUTPUT_PREFIX,
   CLAUDE_NON_PROMPT_PREFIX,
   CLAUDE_PEER_ORIGIN,
   CLAUDE_SHELL_PROMPT,
   CLAUDE_SYSTEM_REMINDER,
+  CLAUDE_TASK_SUMMARY,
   DEFAULT_SUBAGENT_TYPE,
   PRE_TOOL_EVENT,
   REPLAY_PERMISSION_MODE,
@@ -31,7 +33,13 @@ function blocks(line: TranscriptLine, type: string): TranscriptLine[] {
 }
 
 function isUserText(line: TranscriptLine | undefined): line is TranscriptLine {
-  if (line?.type !== "user" || line.isCompactSummary || line.isSidechain) return false;
+  if (
+    line?.type !== "user" ||
+    line.isCompactSummary ||
+    line.isSidechain ||
+    line.queueTranscriptOnly
+  )
+    return false;
   if (line.isMeta && line.origin?.kind !== CLAUDE_PEER_ORIGIN) return false;
   return blocks(line, "tool_result").length === 0;
 }
@@ -40,13 +48,18 @@ function isPrompt(lines: TranscriptLine[], index: number): boolean {
   const line = lines[index];
   if (!isUserText(line) || CLAUDE_NON_PROMPT_PREFIX.test(textOf(line.message?.content)))
     return false;
-  const reply = lines.slice(index + 1).find(isUserText);
-  return !CLAUDE_LOCAL_OUTPUT_PREFIX.test(textOf(reply?.message?.content));
+  const reply = lines
+    .slice(index + 1)
+    .find((later) => isUserText(later) || later.subtype === CLAUDE_LOCAL_COMMAND_SUBTYPE);
+  return (
+    reply?.subtype !== CLAUDE_LOCAL_COMMAND_SUBTYPE &&
+    !CLAUDE_LOCAL_OUTPUT_PREFIX.test(textOf(reply?.message?.content))
+  );
 }
 
 function promptText(line: TranscriptLine): string {
   const text = textOf(line.message?.content).replace(CLAUDE_SYSTEM_REMINDER, "").trim();
-  return CLAUDE_SHELL_PROMPT.exec(text)?.[1] ?? text;
+  return CLAUDE_SHELL_PROMPT.exec(text)?.[1] ?? CLAUDE_TASK_SUMMARY.exec(text)?.[1]?.trim() ?? text;
 }
 
 function endsTurn(lines: TranscriptLine[], index: number): boolean {
@@ -256,7 +269,6 @@ export function claudePlan(
       });
     }
     if (isPrompt(lines, index)) {
-      if (current !== undefined) current.stops = false;
       current = {
         prompt: promptText(line),
         command: "",
