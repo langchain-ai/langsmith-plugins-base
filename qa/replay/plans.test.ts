@@ -296,6 +296,26 @@ describe("claudePlan", () => {
     expect([plan.turns.length, plan.turns[0]?.minTools, stops.length]).toEqual([1, 2, 1]);
   });
 
+  it("keeps a turn going after a blocked Stop and fires a second Stop at its final reply", () => {
+    const retried = [{ type: "text", text: "Retried." }];
+    const blocked = [
+      ...claudeTranscript.slice(0, 4),
+      { type: "user", isMeta: true, message: { content: "Stop hook feedback: retry" } },
+      { type: "attachment", attachment: { type: "hook_blocking_error", hookEvent: "Stop" } },
+      { type: "assistant", message: { id: "m5", stop_reason: "end_turn", content: retried } },
+      { type: "user", isMeta: true, turnCompanion: true, message: { content: "reminder" } },
+      { type: "user", message: { content: "next" } },
+    ];
+    const plan = claudePlan(blocked);
+    const stops = plan.events.filter((event) => event.payload.hook_event_name === "Stop");
+    const active = stops.map((stop) => stop.payload.stop_hook_active);
+    expect([plan.turns.length, plan.turns[0]?.reply, active]).toEqual([
+      2,
+      "Retried.",
+      [false, true],
+    ]);
+  });
+
   it("counts a peer message that arrives mid-turn as part of the running turn", () => {
     const peer = {
       type: "user",
@@ -309,6 +329,15 @@ describe("claudePlan", () => {
       ...claudeTranscript.slice(1, 4),
     ]);
     expect(plan.turns.map((turn) => [turn.prompt, turn.minTools])).toEqual([["list files", 2]]);
+  });
+
+  it("expects one turn for task notifications queued before the model answers", () => {
+    const plan = claudePlan([
+      ...claudeTranscript.slice(0, 4),
+      said(5, "<task-notification>\n<task-id>b1</task-id>"),
+      said(6, "<task-notification>\n<task-id>b2</task-id>"),
+    ]);
+    expect(plan.turns.length).toBe(2);
   });
 
   it("expects a task notification's summary as its prompt", () => {
