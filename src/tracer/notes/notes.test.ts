@@ -15,9 +15,7 @@ import { NotesFollower } from "./notes.js";
 
 const PADDING = "x".repeat(1023);
 
-afterEach(() => {
-  vi.restoreAllMocks();
-});
+afterEach(() => vi.restoreAllMocks());
 
 function follow(notes: string) {
   const received: string[] = [];
@@ -60,6 +58,11 @@ it("reads a note a slow hook writes into the rotated file once the rotation sett
   now.mockReturnValue(1_000 + ROTATED_NOTES_SETTLE_MS);
   follower.take();
   expect(received).toEqual(["new", "late"]);
+  const restarted = follow(notes);
+  restarted.follower.resume({ base: 0, offset: 0 });
+  restarted.follower.take();
+  expect(restarted.received).toEqual(["late", "new"]);
+  follower.removeSettled();
   expect(readdirSync(dirname(notes))).toEqual(["notes.jsonl"]);
 });
 
@@ -76,5 +79,11 @@ it("resumes from a saved bookmark and reads the rotated file a killed follower l
   restarted.follower.resume({ base: 0, offset: "old\n".length });
   restarted.follower.take();
   expect(restarted.received).toEqual(["late", "new"]);
+  killed.follower.take();
+  const afterNew = follow(notes);
+  afterNew.follower.resume(killed.follower.bookmark());
+  expect(afterNew.received).toEqual(["late"]);
+  expect(readdirSync(dirname(notes))).toHaveLength(2);
+  restarted.follower.removeSettled();
   expect(readdirSync(dirname(notes))).toEqual(["notes.jsonl"]);
 });
