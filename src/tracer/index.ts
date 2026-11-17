@@ -5,3 +5,5 @@ export type { SessionSnapshot, NotesBookmark, TracerSnapshot, UploadQueue } from
 export type { TracerPaths, ReadNewLines, SnapshotStore, StartTracerOptions } from "./types.js";
 export type { WorkerOptions, LegacyOpenTurn, LegacySession } from "./types.js";
 export { tracerPaths } from "./paths.js";
+export { startTracerWorker } from "./start.js";
+export { sendHookNote } from "./worker/hook.js";
