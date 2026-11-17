@@ -17,9 +17,13 @@ function sessionTranscripts(session: WorkerSession): string[] {
   return [...new Set([...Object.keys(session.bookmarks), ...session.builder.transcripts()])];
 }
 
+function addKnownTranscripts(session: WorkerSession, sizes: Record<string, number>): void {
+  for (const path of sessionTranscripts(session)) sizes[path] ??= fileSize(path);
+}
+
 export function positionNote(session: WorkerSession, note: PositionedHookNote): PositionedHookNote {
   const transcriptSizes = { ...note.transcriptSizes };
-  for (const path of sessionTranscripts(session)) transcriptSizes[path] ??= fileSize(path);
+  addKnownTranscripts(session, transcriptSizes);
   return { ...note, transcriptSizes };
 }
 
@@ -32,10 +36,12 @@ function noteReached(session: WorkerSession, note: PositionedHookNote): boolean 
 function deliverReadyNotes(session: WorkerSession, log: Log): boolean {
   let delivered = false;
   for (let note = session.pendingNotes[0]; note !== undefined; note = session.pendingNotes[0]) {
+    addKnownTranscripts(session, note.transcriptSizes);
     if (!noteReached(session, note)) break;
     session.pendingNotes.shift();
     delivered = true;
     if (note.event === SESSION_END_EVENT) session.ended = true;
+    session.writer = note.writer;
     try {
       session.builder.receiveNote(note);
     } catch (error) {
@@ -114,10 +120,12 @@ export function readPass(
   readNewLines: ReadNewLines,
   log: Log,
   paused: () => boolean,
+  takeNotes: () => void,
 ): boolean {
   let progressed = false;
   for (;;) {
     if (paused()) return progressed;
+    takeNotes();
     let advanced = deliverReadyNotes(session, log);
     for (const path of sessionTranscripts(session))
       advanced = readTranscript(session, path, readNewLines, log) || advanced;

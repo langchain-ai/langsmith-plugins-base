@@ -24,7 +24,7 @@ await runWorker({
     injectWrite(bookmark);
     return readNewLines(bookmark, lineId).lines;
   },
-  createBuilder: ({ sessionId, tracingMode }) => {
+  createBuilder: ({ sessionId, tracingMode, sink }) => {
     if (tracingMode !== undefined) write(`${sessionId} mode ${tracingMode}`);
     const subagents = new Set();
     return {
@@ -33,6 +33,13 @@ await runWorker({
         write(`${sessionId} line ${line.uuid}`);
         if (line.subagent) subagents.add(line.subagent);
         if (line.fillsQueue) fs.writeFileSync(`${record}.full`, "");
+        if (line.posts) sink.post({ id: line.uuid });
+        if (line.hook) {
+          const { note, next } = line.hook;
+          const transcriptSizes = { [note.transcriptPath]: fs.statSync(note.transcriptPath).size };
+          fs.appendFileSync(paths.notes, `${JSON.stringify({ ...note, transcriptSizes })}\n`);
+          fs.appendFileSync(note.transcriptPath, next);
+        }
       },
       receiveNote: (note) => write(`${sessionId} note ${note.event}`),
       transcripts: () => [...subagents],
@@ -41,7 +48,7 @@ await runWorker({
     };
   },
   createQueue: () => ({
-    post: () => undefined,
+    post: (sessionId, writer, run) => write(`${sessionId} post ${run.id} redact ${writer.redact}`),
     patch: () => undefined,
     pendingFor: () => (fs.existsSync(`${record}.pending`) ? 1 : 0),
     idle: () => true,
