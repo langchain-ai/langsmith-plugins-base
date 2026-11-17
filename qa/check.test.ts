@@ -84,6 +84,12 @@ describe("checkRuns", () => {
     ).toEqual(["turn 1 is missing the final reply"]);
   });
 
+  it("accepts a final reply kept as text the way Cursor saves it", () => {
+    expect(
+      checkRuns(scenario, withChange("r1", { outputs: { messages: [], text: "it says hello" } })),
+    ).toEqual([]);
+  });
+
   it("matches a prompt and tool output that contain quotes", () => {
     const quoted: Scenario = {
       ...scenario,
@@ -173,6 +179,18 @@ describe("checkRuns against a recorded session", () => {
     };
     const runs = withChange("r1", {
       inputs: { messages: ["read notes " + "x".repeat(80) + " key=[SECRET_DETECTED]"] },
+    });
+    expect(checkRuns(redacted, runs)).toEqual([]);
+  });
+
+  it("accepts a reply the plugin redacted past its opening", () => {
+    const secret = "see notes " + "x".repeat(80) + " https://me:pw@host";
+    const redacted = {
+      ...recorded,
+      turns: [recorded.turns[0]!, { ...recorded.turns[1]!, reply: secret }],
+    };
+    const runs = withChange("r2", {
+      outputs: { messages: ["see notes " + "x".repeat(80) + " https://[SECRET_DETECTED]@host"] },
     });
     expect(checkRuns(redacted, runs)).toEqual([]);
   });

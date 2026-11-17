@@ -46,7 +46,8 @@ export function checkRuns(scenario: Scenario, runs: TracedRun[]): string[] {
     const tools = children.filter((run) => run.run_type === "tool" && run.name !== SKILL_TOOL_NAME);
     if (!containsText(JSON.stringify(root.inputs) ?? "", turn.prompt.slice(0, PROMPT_MATCH_CHARS)))
       failures.push(`${label} is missing the user prompt`);
-    if (turn.reply !== null && !hasText((root.outputs as RootOutputs | null)?.messages))
+    const outputs = root.outputs as RootOutputs | null;
+    if (turn.reply !== null && !hasText(outputs?.messages) && !hasText(outputs?.text))
       failures.push(`${label} is missing the final reply`);
     if (turn.expectsModelCall !== false && !children.some((run) => run.run_type === "llm"))
       failures.push(`${label} has no model call`);
@@ -56,7 +57,7 @@ export function checkRuns(scenario: Scenario, runs: TracedRun[]): string[] {
       failures.push(`${label} has ${tools.length} tool runs, expected at most ${turn.maxTools}`);
     if (
       typeof turn.reply === "string" &&
-      !containsText(JSON.stringify(root.outputs) ?? "", turn.reply)
+      !containsText(JSON.stringify(root.outputs) ?? "", turn.reply.slice(0, PROMPT_MATCH_CHARS))
     )
       failures.push(`${label} reply does not match the transcript`);
     const expectedOutput = turn.toolOutputContains;
