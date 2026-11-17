@@ -22,7 +22,7 @@ import type {
   StopWorkerRequest,
   WorkerSession,
 } from "../types.js";
-import { releaseLock, takeLock } from "./lock.js";
+import { releaseLock, takeLock, takeLockFromOlder } from "./lock.js";
 import { NotesFollower } from "../notes/notes.js";
 import { isIdle, positionNote, readPass, snapshotOf } from "./session.js";
 
@@ -111,7 +111,6 @@ class TracerWorker {
       });
     this.sessions.set(session.sessionId, session);
     session.integration = note.integration;
-    session.writer = note.writer;
     session.ended = false;
     if (note.transcriptPath !== undefined)
       session.bookmarks[note.transcriptPath] ??= { path: note.transcriptPath, offset: 0 };
@@ -148,7 +147,8 @@ class TracerWorker {
     const session = this.sessions.get(sessionId);
     if (session === undefined) return;
     this.attempt(`read failed for ${sessionId}`, () => {
-      if (readPass(session, this.options.readNewLines, this.log, () => this.queue.full())) {
+      const paused = () => this.queue.full();
+      if (readPass(session, this.options.readNewLines, this.log, paused, () => this.takeNotes())) {
         this.lastActivity = Date.now();
         this.unsaved = true;
       }
@@ -176,7 +176,10 @@ class TracerWorker {
       notes: this.notes.bookmark(),
     };
     this.unsaved = false;
-    this.attempt("could not save the snapshot", () => this.options.snapshots.save(this.saved));
+    this.attempt("could not save the snapshot", () => {
+      this.options.snapshots.save(this.saved);
+      this.notes.removeSettled();
+    });
   }
 
   private shouldExit(): boolean {
@@ -206,6 +209,7 @@ class TracerWorker {
     this.resumeReadsAfterUploads();
     this.saveSnapshot();
     if (this.shouldExit()) this.exit();
+    else for (const sessionId of this.sessions.keys()) this.scheduleRead(sessionId);
   }
 
   private exit(): void {
@@ -226,7 +230,7 @@ class TracerWorker {
 
 export async function runWorker(options: WorkerOptions): Promise<void> {
   mkdirSync(options.paths.folder, { recursive: true, mode: TRACER_FOLDER_MODE });
-  if (!takeLock(options.paths.lock, options.version)) return;
+  if (!(await takeLockFromOlder(options.paths.lock, options.version))) return;
   const worker = new TracerWorker(options);
   const stopped = worker.stopped;
   try {
