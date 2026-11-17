@@ -185,11 +185,13 @@ function subagentEvents(
     if (line.type === "assistant") {
       for (const text of blocks(line, "text")) lastText = String(text.text);
       for (const use of blocks(line, "tool_use")) {
+        if (use.id === launch.toolUseId) continue;
         toolUses.set(use.id, use);
         emit(index + 1, preToolUse(use));
       }
     }
     for (const result of line.type === "user" ? blocks(line, "tool_result") : []) {
+      if (result.tool_use_id === launch.toolUseId) continue;
       const use = toolUses.get(result.tool_use_id);
       const child = launchedSubagent(transcripts, launched, line, result, use);
       if (child !== undefined)
