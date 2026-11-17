@@ -52,6 +52,7 @@ export const READ_DEBOUNCE_MS = 20;
 export const TICK_MS = 500;
 export const IDLE_EXIT_MS = 3_000;
 export const ABANDONED_EXIT_MS = 600_000;
+export const HANDOFF_WAIT_MS = 30_000;
 
 export const SESSION_END_EVENT = "SessionEnd";
 export const WORKER_STARTED_LOG = "worker started";

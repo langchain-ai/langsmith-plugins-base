@@ -22,7 +22,7 @@ import type {
   StopWorkerRequest,
   WorkerSession,
 } from "../models.js";
-import { releaseLock, takeLock } from "./lock.js";
+import { releaseLock, takeLock, takeLockFromOlder } from "./lock.js";
 import { NotesFollower } from "../notes/notes.js";
 import { positionNote, readPass, snapshotOf } from "./session.js";
 
@@ -183,7 +183,10 @@ class TracerWorker {
       notes: this.notes.bookmark(),
     };
     this.unsaved = false;
-    this.attempt("could not save the snapshot", () => this.options.snapshots.save(this.saved));
+    this.attempt("could not save the snapshot", () => {
+      this.options.snapshots.save(this.saved);
+      this.notes.removeSettled();
+    });
   }
 
   private shouldExit(): boolean {
@@ -213,6 +216,7 @@ class TracerWorker {
     this.resumeReadsAfterUploads();
     this.saveSnapshot();
     if (this.shouldExit()) this.exit();
+    else for (const sessionId of this.sessions.keys()) this.scheduleRead(sessionId);
   }
 
   private exit(): void {
@@ -233,7 +237,7 @@ class TracerWorker {
 
 export async function runWorker(options: WorkerOptions): Promise<void> {
   mkdirSync(options.paths.folder, { recursive: true, mode: TRACER_FOLDER_MODE });
-  if (!takeLock(options.paths.lock, options.version)) return;
+  if (!(await takeLockFromOlder(options.paths.lock, options.version))) return;
   const worker = new TracerWorker(options);
   const stopped = worker.stopped();
   try {

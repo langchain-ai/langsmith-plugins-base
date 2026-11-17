@@ -36,6 +36,7 @@ function sandbox() {
   const home = mkdtempSync(join(tmpdir(), "tw-"));
   const stateFolder = join(home, "state");
   const paths = tracerPaths(stateFolder);
+  writeFileSync(join(home, "main.jsonl"), "");
   return {
     home,
     stateFolder,
@@ -107,12 +108,13 @@ it("keeps a note written while no worker runs private and applies it in transcri
   expect(await recorded(box, 4)).toEqual(["s line L1", "s line L2", "s note Stop", "s line L3"]);
 });
 
-it("holds a Stop until the transcript lines written before it are read", async () => {
+it("reads lines between hooks and holds a Stop until the lines written before it are read", async () => {
   const box = sandbox();
-  writeFileSync(box.main, "");
   hook(box, note(box, "Start"));
   await recorded(box, 1);
-  appendFileSync(box.main, transcriptLine("L1") + transcriptLine("L2"));
+  appendFileSync(box.main, transcriptLine("L1"));
+  await recorded(box, 2);
+  appendFileSync(box.main, transcriptLine("L2"));
   hook(box, note(box, "Stop"));
   expect(await recorded(box, 4)).toEqual(["s note Start", "s line L1", "s line L2", "s note Stop"]);
 });
@@ -130,9 +132,16 @@ it("does not read subagent lines written after a Stop before the Stop", async ()
   expect((await recorded(box, 6)).slice(3)).toEqual(["s line L2", "s note Stop", "s line S2"]);
 });
 
+it("reads a subagent found during a read up to a note before delivering it", async () => {
+  const box = sandbox();
+  writeFileSync(box.main, transcriptLine("L1", { subagent: box.subagent }));
+  writeFileSync(box.subagent, transcriptLine("S1"));
+  hook(box, note(box, "Stop"));
+  expect(await recorded(box, 3)).toEqual(["s line L1", "s line S1", "s note Stop"]);
+});
+
 it("delivers a note whose transcript size fell in the middle of a line", async () => {
   const box = sandbox();
-  writeFileSync(box.main, "");
   hook(box, note(box, "Start"), false);
   appendFileSync(box.main, `${transcriptLine("L1")}{"uuid":`);
   hook(box, note(box, "Stop"), false);
@@ -158,7 +167,6 @@ it("delivers a note whose transcript was deleted before it was read", async () =
 
 it("exits after every session ends and removes its lock", async () => {
   const box = sandbox();
-  writeFileSync(box.main, "");
   hook(box, note(box, "Start"));
   hook(box, note(box, "SessionEnd"));
   await recorded(box, 2);
@@ -222,15 +230,13 @@ it("hands off from an older worker to the newer plugin's worker", async () => {
   await waitFor(() => startedWorkers(box) === 1);
   hook(box, note(box, "Start"), true, "1.10.0");
   await once(older, "exit");
-  expect(existsSync(box.paths.lock)).toBe(false);
-  hook(box, note(box, "Next"), true, "1.10.0");
   const newer = await waitFor(
     () => existsSync(box.paths.lock) && JSON.parse(readFileSync(box.paths.lock, "utf8")),
   );
   expect(newer.version).toBe("1.10.0");
-  expect(await recorded(box, 2)).toEqual(["s note Start", "s note Next"]);
+  await once(startWorker(box, "1.10.0"), "exit");
   hook(box, note(box, "FromOlderPlugin"), true, "1.9.0");
-  await recorded(box, 3);
+  expect(await recorded(box, 2)).toEqual(["s note Start", "s note FromOlderPlugin"]);
   await delay(TICK_MS * 2);
   expect(lockPid(box.paths.lock)).toBe(newer.pid);
 });
