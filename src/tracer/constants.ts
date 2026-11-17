@@ -6,6 +6,7 @@ export const SNAPSHOT_FILE = "snapshot.json";
 export const NOTES_FILE = "notes.jsonl";
 export const LOG_FILE = "tracer.log";
 export const TRACER_FOLDER_MODE = 0o700;
+export const NOTES_FILE_MODE = 0o600;
 
 export const READ_CHUNK_BYTES = 1_048_576;
 export const BOOKMARK_CHECK_BYTES = 1_048_576;
@@ -41,3 +42,21 @@ export const UPLOAD_QUEUE_GAVE_UP_LOG =
   "DROPPED run {runId} of session {sessionId} on {destination}, since it failed again when sent on its own: {reason}";
 export const UPLOAD_QUEUE_WRITER_FAILED_LOG =
   "DROPPED every run for an upload setting that could not be used: {reason}";
+
+export const LOCK_TEMPORARY_SUFFIX = ".claim.";
+export const LOCK_TAKEOVER_SUFFIX = ".takeover";
+export const LOCK_ATTEMPTS = 3;
+export const LOCK_TAKEOVER_STALE_MS = 1_000;
+
+export const UNREAD_NOTES = { base: 0, offset: 0 };
+export const HOOK_WARNING_PREFIX = "langsmith tracer: ";
+
+export const READ_DEBOUNCE_MS = 20;
+export const TICK_MS = 500;
+export const IDLE_EXIT_MS = 3_000;
+export const ABANDONED_EXIT_MS = 600_000;
+
+export const SESSION_END_EVENT = "SessionEnd";
+export const WORKER_STARTED_LOG = "worker started";
+export const WORKER_STOPPED_LOG = "worker stopped";
+export const WORKER_RESUMED_LOG = "worker resumed for late notes";
