@@ -301,6 +301,18 @@ export function claudePlan(
       lastText = "";
       emit(index, { hook_event_name: "UserPromptSubmit", prompt: current.prompt });
     }
+    if (line.type === "assistant" && !line.isSidechain && current === undefined) {
+      current = {
+        prompt: "",
+        command: "",
+        minTools: 0,
+        maxTools: 0,
+        reply: null,
+        expectsModelCall: false,
+      };
+      turns.push(current);
+      lastText = "";
+    }
     if (line.type === "assistant" && !line.isSidechain) {
       if (current !== undefined) current.expectsModelCall = true;
       for (const text of blocks(line, "text")) lastText = String(text.text);

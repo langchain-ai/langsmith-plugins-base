@@ -463,6 +463,39 @@ describe("claudePlan", () => {
     expect(plan.turns[0]?.minTools).toBe(2);
   });
 
+  it("plans a turn for model work that has no prompt of its own and stops it", () => {
+    const plan = claudePlan([
+      { ...said(0, "summary"), sessionId: "s1", isCompactSummary: true },
+      toolCalls(1, { id: "t1", name: "Bash" }),
+      toolResults(2, ["t1"]),
+      {
+        type: "assistant",
+        timestamp: at(3),
+        message: { id: "m1", stop_reason: "end_turn", content: [] },
+      },
+      said(4, "next"),
+      {
+        type: "assistant",
+        timestamp: at(5),
+        message: { id: "m2", stop_reason: "end_turn", content: [] },
+      },
+    ]);
+    expect(plan.turns.map(({ prompt, minTools }) => [prompt, minTools])).toEqual([
+      ["", 1],
+      ["next", 0],
+    ]);
+    expect(plan.events.map((event) => event.payload.hook_event_name)).toEqual([
+      "SessionStart",
+      "PostCompact",
+      "PreToolUse",
+      "PostToolUse",
+      "Stop",
+      "UserPromptSubmit",
+      "Stop",
+      "SessionEnd",
+    ]);
+  });
+
   it("replays a subagent started by another subagent inside its parent's Agent call", () => {
     const dig = { name: "Agent", input: { prompt: "dig deeper" } };
     const launched = [
