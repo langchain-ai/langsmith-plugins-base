@@ -436,6 +436,33 @@ describe("claudePlan", () => {
     ]);
   });
 
+  it("leaves out the parent's Agent call that a forked subagent copies into its transcript", () => {
+    const launched = [
+      { ...said(0, "explore"), sessionId: "s1" },
+      toolCalls(1, { id: "f1", name: "Agent" }),
+      toolResults(2, ["f1"], { agentId: "x4", status: "async_launched" }),
+      { type: "assistant", timestamp: at(9), message: { stop_reason: "end_turn", content: [] } },
+    ];
+    const fork = jsonLines([
+      { type: "fork-context-ref", agentId: "x4" },
+      toolCalls(1, { id: "f1", name: "Agent" }),
+      toolResults(2, ["f1"]),
+      toolCalls(3, { id: "s1", name: "Bash" }),
+      toolResults(4, ["s1"]),
+    ]);
+    const plan = claudePlan(launched, new Map([["x4", fork]]));
+    expect(
+      plan.events
+        .filter((event) => event.agentId === "x4")
+        .map((event) => [event.payload.hook_event_name, event.payload.tool_use_id]),
+    ).toEqual([
+      ["PreToolUse", "s1"],
+      ["PostToolUse", "s1"],
+      ["SubagentStop", undefined],
+    ]);
+    expect(plan.turns[0]?.minTools).toBe(2);
+  });
+
   it("replays a subagent started by another subagent inside its parent's Agent call", () => {
     const dig = { name: "Agent", input: { prompt: "dig deeper" } };
     const launched = [
