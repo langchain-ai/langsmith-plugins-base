@@ -1,4 +1,5 @@
 import {
+  CLAUDE_BLOCKED_STOP,
   CLAUDE_COMMAND_PROMPT,
   CLAUDE_LOCAL_COMMAND_SUBTYPE,
   CLAUDE_LOCAL_OUTPUT_PREFIX,
@@ -6,6 +7,7 @@ import {
   CLAUDE_PEER_ORIGIN,
   CLAUDE_SHELL_PROMPT,
   CLAUDE_SYSTEM_REMINDER,
+  CLAUDE_TASK_NOTIFICATION,
   CLAUDE_TASK_SUMMARY,
   DEFAULT_SUBAGENT_TYPE,
   PRE_TOOL_EVENT,
@@ -74,10 +76,11 @@ function endsTurn(lines: TranscriptLine[], index: number): boolean {
   const line = lines[index];
   if (line?.type !== "assistant" || line.isSidechain || line.message?.stop_reason !== "end_turn")
     return false;
-  const next = lines
-    .slice(index + 1)
-    .find((later) => later.type === "assistant" || isUserText(later) || later.turnCompanion);
-  return next === undefined || (!next.turnCompanion && next.message?.id !== line.message?.id);
+  const later = lines.slice(index + 1);
+  const next = later.find((after) => after.type === "assistant" || isUserText(after));
+  const companion = later.find((after) => after === next || after.turnCompanion)?.turnCompanion;
+  if (companion) return isUserText(next);
+  return next === undefined || next.message?.id !== line.message?.id;
 }
 
 function preToolUse(use: TranscriptLine): Record<string, unknown> {
@@ -246,6 +249,7 @@ export function claudePlan(
     ),
   );
   let current: ScenarioTurn | undefined;
+  let stopHookActive = false;
   let lastText = "";
   let at = Number.NaN;
 
@@ -276,7 +280,13 @@ export function claudePlan(
         compact_summary: textOf(line.message?.content),
       });
     }
-    if (isPrompt(lines, index) && !(line.isMeta && current !== undefined)) {
+    const { type, hookEvent } = line.attachment ?? {};
+    if (current === undefined && type === CLAUDE_BLOCKED_STOP && hookEvent === "Stop") {
+      current = turns.at(-1);
+      stopHookActive = true;
+    }
+    const joins = line.isMeta || CLAUDE_TASK_NOTIFICATION.test(textOf(line.message?.content));
+    if (isPrompt(lines, index) && !(joins && current !== undefined)) {
       current = {
         prompt: promptText(line),
         command: "",
@@ -328,10 +338,11 @@ export function claudePlan(
       if (lastText.length > 0) current.reply = lastText;
       emit(index + 1, {
         hook_event_name: "Stop",
-        stop_hook_active: false,
+        stop_hook_active: stopHookActive,
         last_assistant_message: lastText,
       });
       current = undefined;
+      stopHookActive = false;
     }
   }
   const replayed = withSubagents(events, times, placed);
