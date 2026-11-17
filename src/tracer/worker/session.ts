@@ -119,10 +119,12 @@ export function readPass(
   readNewLines: ReadNewLines,
   log: Log,
   paused: () => boolean,
+  takeNotes: () => void,
 ): boolean {
   let progressed = false;
   for (;;) {
     if (paused()) return progressed;
+    takeNotes();
     let advanced = deliverReadyNotes(session, log);
     for (const path of sessionTranscripts(session))
       advanced = readTranscript(session, path, readNewLines, log) || advanced;

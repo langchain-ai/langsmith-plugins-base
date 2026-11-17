@@ -34,6 +34,12 @@ await runWorker({
         write(`${sessionId} line ${line.uuid}`);
         if (line.subagent) subagents.add(line.subagent);
         if (line.fillsQueue) fs.writeFileSync(`${record}.full`, "");
+        if (line.hook) {
+          const { note, next } = line.hook;
+          const transcriptSizes = { [note.transcriptPath]: fs.statSync(note.transcriptPath).size };
+          fs.appendFileSync(paths.notes, `${JSON.stringify({ ...note, transcriptSizes })}\n`);
+          fs.appendFileSync(note.transcriptPath, next);
+        }
       },
       receiveNote: (note) => {
         write(`${sessionId} note ${note.event}`);

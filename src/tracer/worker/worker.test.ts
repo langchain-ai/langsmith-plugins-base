@@ -140,6 +140,20 @@ it("reads a subagent found during a read up to a note before delivering it", asy
   expect(await recorded(box, 3)).toEqual(["s line L1", "s line S1", "s note Stop"]);
 });
 
+it("takes a hook's note before reading a line written after it during the same read", async () => {
+  const box = sandbox();
+  hook(box, note(box, "Start"));
+  await recorded(box, 1);
+  const prompt = { note: note(box, "Prompt"), next: transcriptLine("L2") };
+  appendFileSync(box.main, transcriptLine("L1", { hook: prompt }));
+  expect(await recorded(box, 4)).toEqual([
+    "s note Start",
+    "s line L1",
+    "s note Prompt",
+    "s line L2",
+  ]);
+});
+
 it("delivers a note whose transcript size fell in the middle of a line", async () => {
   const box = sandbox();
   hook(box, note(box, "Start"), false);

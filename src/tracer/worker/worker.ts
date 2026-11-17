@@ -155,7 +155,8 @@ class TracerWorker {
     const session = this.sessions.get(sessionId);
     if (session === undefined) return;
     this.attempt(`read failed for ${sessionId}`, () => {
-      if (readPass(session, this.options.readNewLines, this.log, () => this.queue.full())) {
+      const paused = () => this.queue.full();
+      if (readPass(session, this.options.readNewLines, this.log, paused, () => this.takeNotes())) {
         this.lastActivity = Date.now();
         this.unsaved = true;
       }

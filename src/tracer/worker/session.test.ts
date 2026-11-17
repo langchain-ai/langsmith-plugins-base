@@ -48,6 +48,7 @@ it("rereads lines a pending note held back after the real reader moved past them
     (bookmark, lineId) => readNewLines(bookmark, lineId).lines,
     () => undefined,
     () => false,
+    () => undefined,
   );
   expect(applied).toEqual(["S1", "Stop", "L2", "L3"]);
   expect(session.bookmarks[main]).toEqual({
