@@ -64,6 +64,7 @@ export interface TracedRun {
 
 export interface RootOutputs {
   messages?: unknown;
+  text?: unknown;
 }
 
 export interface Workspace {
