@@ -4,7 +4,7 @@ import { recoverBookmark } from "./bookmark.js";
 import { parseLine, scanLines } from "./lines.js";
 import { READ_CHUNK_BYTES } from "../constants.js";
 
-const checkedBookmarks = new WeakSet<Bookmark>();
+const checkedInodes = new WeakMap<Bookmark, bigint>();
 
 export function readNewLines(bookmark: Bookmark, lineId: LineIdReader): TranscriptRead {
   const lines: ReadLine[] = [];
@@ -12,10 +12,11 @@ export function readNewLines(bookmark: Bookmark, lineId: LineIdReader): Transcri
   if (!existsSync(bookmark.path)) return { lines, notices, reachedEnd: true };
   const file = openSync(bookmark.path, "r");
   try {
-    const size = fstatSync(file).size;
-    if (size < bookmark.offset || !checkedBookmarks.has(bookmark)) {
+    const { size: bigSize, ino } = fstatSync(file, { bigint: true });
+    const size = Number(bigSize);
+    if (size < bookmark.offset || ino === 0n || checkedInodes.get(bookmark) !== ino) {
       recoverBookmark(file, size, bookmark, lineId, notices);
-      checkedBookmarks.add(bookmark);
+      checkedInodes.set(bookmark, ino);
     }
     const start = bookmark.offset;
     let reachedEnd = true;
