@@ -9,7 +9,6 @@ export interface ScenarioTurn {
   reply?: string | null;
   expectsModelCall?: boolean;
   toolOutputContains?: string;
-  stops?: boolean;
 }
 
 export interface Scenario {

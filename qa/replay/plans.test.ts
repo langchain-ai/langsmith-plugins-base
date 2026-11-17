@@ -263,13 +263,85 @@ describe("claudePlan", () => {
     ]);
   });
 
-  it("marks a turn that never stopped so the checker expects no trace for it", () => {
+  it("expects no turn for a local command whose output is logged as a system line", () => {
     const plan = claudePlan([
-      { type: "user", sessionId: "s1", message: { content: "first" } },
-      { type: "user", message: { content: "second" } },
+      {
+        type: "user",
+        sessionId: "s1",
+        message: { content: "<command-name>/usage</command-name>" },
+      },
+      { type: "system", subtype: "local_command", content: "<local-command-stdout>" },
+      { type: "user", message: { content: "thanks" } },
       { type: "assistant", message: { id: "m1", stop_reason: "end_turn", content: [] } },
     ]);
-    expect(plan.turns.map((turn) => turn.stops)).toEqual([false, undefined]);
+    expect(plan.turns.map((turn) => turn.prompt)).toEqual(["thanks"]);
+  });
+
+  it("expects no turn for a notice Claude Code only writes to the transcript", () => {
+    const notice = { type: "user", queueTranscriptOnly: true, message: { content: "done" } };
+    const plan = claudePlan([{ ...notice, sessionId: "s1" }, ...claudeTranscript.slice(0, 4)]);
+    expect(plan.turns.map((turn) => turn.prompt)).toEqual(["list files"]);
+  });
+
+  it("expects a slash command and a shell command as they were typed", () => {
+    const done = { type: "assistant", message: { id: "m1", stop_reason: "end_turn", content: [] } };
+    const command =
+      "<command-message>review</command-message>\n<command-name>/review</command-name>\n<command-args>42</command-args>";
+    const plan = claudePlan([
+      { type: "user", sessionId: "s1", message: { content: command } },
+      done,
+      {
+        type: "user",
+        message: { content: "<bash-input> ls </bash-input><bash-stdout>a</bash-stdout>" },
+      },
+      { ...done, message: { ...done.message, id: "m2" } },
+    ]);
+    expect(plan.turns.map((turn) => turn.prompt)).toEqual(["/review 42", "ls"]);
+  });
+
+  it("expects a turn for a prompt Claude Code submits itself", () => {
+    const scheduled = {
+      type: "user",
+      isMeta: true,
+      turnPosition: {},
+      message: { content: "tick" },
+    };
+    const plan = claudePlan([{ ...scheduled, sessionId: "s1" }, claudeTranscript[3]!]);
+    expect(plan.turns.map((turn) => [turn.prompt, turn.reply])).toEqual([["tick", "One file."]]);
+  });
+
+  it("keeps a turn going when Claude Code continues it after its reply", () => {
+    const continued = [
+      ...claudeTranscript.slice(0, 4),
+      { type: "user", isMeta: true, turnCompanion: true, message: { content: "check it" } },
+      ...claudeTranscript.slice(1, 3),
+      { type: "assistant", message: { id: "m5", stop_reason: "end_turn", content: [] } },
+    ];
+    const plan = claudePlan(continued);
+    const stops = plan.events.filter((event) => event.payload.hook_event_name === "Stop");
+    expect([plan.turns.length, plan.turns[0]?.minTools, stops.length]).toEqual([1, 2, 1]);
+  });
+
+  it("counts a peer message that arrives mid-turn as part of the running turn", () => {
+    const peer = {
+      type: "user",
+      isMeta: true,
+      origin: { kind: "peer" },
+      message: { content: "hi" },
+    };
+    const plan = claudePlan([
+      ...claudeTranscript.slice(0, 3),
+      peer,
+      ...claudeTranscript.slice(1, 4),
+    ]);
+    expect(plan.turns.map((turn) => [turn.prompt, turn.minTools])).toEqual([["list files", 2]]);
+  });
+
+  it("expects a task notification's summary as its prompt", () => {
+    const notice =
+      "<task-notification>\n<task-id>b1</task-id>\n<summary> Build finished </summary>";
+    const plan = claudePlan([{ type: "user", sessionId: "s1", message: { content: notice } }]);
+    expect(plan.turns.map((turn) => turn.prompt)).toEqual(["Build finished"]);
   });
 
   it("replays a subagent's hooks before its Agent call finishes", () => {

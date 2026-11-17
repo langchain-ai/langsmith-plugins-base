@@ -12,7 +12,12 @@ export class RunCapture {
   receiveBatch(body: RunBatch): void {
     this.received += 1;
     for (const run of [...(body.post ?? []), ...(body.patch ?? [])]) {
-      this.stored.set(run.id, { ...this.stored.get(run.id), ...run });
+      const merged = { ...this.stored.get(run.id), ...run };
+      if (merged.run_type === "llm") {
+        delete merged.inputs;
+        delete merged.outputs;
+      }
+      this.stored.set(run.id, merged);
     }
   }
 
