@@ -257,6 +257,45 @@ describe("claudePlan", () => {
     expect(plan.turns.map((turn) => turn.prompt)).toEqual(["list files"]);
   });
 
+  it("expects a slash command and a shell command as they were typed", () => {
+    const done = { type: "assistant", message: { id: "m1", stop_reason: "end_turn", content: [] } };
+    const command =
+      "<command-message>review</command-message>\n<command-name>/review</command-name>\n<command-args>42</command-args>";
+    const plan = claudePlan([
+      { type: "user", sessionId: "s1", message: { content: command } },
+      done,
+      {
+        type: "user",
+        message: { content: "<bash-input> ls </bash-input><bash-stdout>a</bash-stdout>" },
+      },
+      { ...done, message: { ...done.message, id: "m2" } },
+    ]);
+    expect(plan.turns.map((turn) => turn.prompt)).toEqual(["/review 42", "ls"]);
+  });
+
+  it("expects a turn for a prompt Claude Code submits itself", () => {
+    const scheduled = {
+      type: "user",
+      isMeta: true,
+      turnPosition: {},
+      message: { content: "tick" },
+    };
+    const plan = claudePlan([{ ...scheduled, sessionId: "s1" }, claudeTranscript[3]!]);
+    expect(plan.turns.map((turn) => [turn.prompt, turn.reply])).toEqual([["tick", "One file."]]);
+  });
+
+  it("keeps a turn going when Claude Code continues it after its reply", () => {
+    const continued = [
+      ...claudeTranscript.slice(0, 4),
+      { type: "user", isMeta: true, turnCompanion: true, message: { content: "check it" } },
+      ...claudeTranscript.slice(1, 3),
+      { type: "assistant", message: { id: "m5", stop_reason: "end_turn", content: [] } },
+    ];
+    const plan = claudePlan(continued);
+    const stops = plan.events.filter((event) => event.payload.hook_event_name === "Stop");
+    expect([plan.turns.length, plan.turns[0]?.minTools, stops.length]).toEqual([1, 2, 1]);
+  });
+
   it("expects a task notification's summary as its prompt", () => {
     const notice =
       "<task-notification>\n<task-id>b1</task-id>\n<summary> Build finished </summary>";
