@@ -3,7 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it } from "vitest";
 import type { FakeLangSmith } from "../../test-support/models/tracer-queue.js";
 import { startFakeLangSmith } from "../../test-support/tracing/fake-langsmith.js";
 import { waitFor } from "../../test-support/wait.js";
@@ -65,11 +65,11 @@ function finish(posted: RunPost): RunPatch {
   };
 }
 
-function batchWith(id: string, kind: "posts" | "patches"): number {
-  return server.batches.findIndex((batch) => batch[kind].some((item) => item["id"] === id));
-}
+const batchWith = (id: string, kind: "posts" | "patches") =>
+  server.batches.findIndex((batch) => batch[kind].some((item) => item["id"] === id));
 
 async function uploaded(): Promise<void> {
+  queue.flush();
   await waitFor(() => queue.idle(), "the queue to empty");
 }
 
@@ -84,173 +84,158 @@ afterEach(async () => {
   await server.close();
 });
 
-describe("upload queue", () => {
-  it("posts a parent before a child that was queued first", async () => {
-    const parent = run();
-    const child = run(parent);
-    queue.post("s1", writer(), child);
-    queue.post("s1", writer(), parent);
-    queue.flush();
-    await uploaded();
+it("posts a parent before a child that was queued first", async () => {
+  const parent = run();
+  const child = run(parent);
+  queue.post("s1", writer(), child);
+  queue.post("s1", writer(), parent);
+  await uploaded();
+  expect(batchWith(parent.id, "posts")).toBe(0);
+  expect(batchWith(child.id, "posts")).toBe(1);
+});
 
-    expect(batchWith(parent.id, "posts")).toBe(0);
-    expect(batchWith(child.id, "posts")).toBe(1);
+it("holds a patch that arrives while its post is in flight, even with reordered settings", async () => {
+  const root = run();
+  server.holdResponses = true;
+  queue.post("s1", writer(), root);
+  queue.flush();
+  await waitFor(() => server.batches.length === 1, "the post to reach the server");
+  queue.patch("s1", Object.assign({ storageRoot }, writer()), finish(root));
+  queue.flush();
+  expect(queue.pendingFor("s1")).toBe(1);
+  expect(queue.pendingFor("s2")).toBe(0);
+  await delay(100);
+  expect(server.batches).toHaveLength(1);
+  server.release();
+  await uploaded();
+  expect(queue.pendingFor("s1")).toBe(0);
+  expect(server.batches[0]!.posts[0]!["end_time"]).toBeUndefined();
+  expect(server.batches[1]!.patches[0]).toMatchObject({
+    id: root.id,
+    outputs: { answer: SECRET },
   });
+});
 
-  it("holds a patch that arrives while its post is in flight", async () => {
-    const root = run();
-    server.holdResponses = true;
-    queue.post("s1", writer(), root);
-    queue.flush();
-    await waitFor(() => server.batches.length === 1, "the post to reach the server");
-    queue.patch("s1", writer(), finish(root));
-    queue.flush();
-    expect(queue.pendingFor("s1")).toBe(1);
-    expect(queue.pendingFor("s2")).toBe(0);
-    await delay(100);
-    expect(server.batches).toHaveLength(1);
-    server.release();
-    await uploaded();
+it("merges a patch into a post that has not been sent yet", async () => {
+  const root = run();
+  queue.post("s1", writer(), root);
+  queue.patch("s1", writer(), finish(root));
+  await uploaded();
+  expect(server.batches).toHaveLength(1);
+  expect(server.batches[0]!.patches).toEqual([]);
+  expect(server.batches[0]!.posts[0]).toMatchObject({ outputs: { answer: SECRET } });
+});
 
-    expect(queue.pendingFor("s1")).toBe(0);
-    expect(server.batches[0]!.posts[0]!["end_time"]).toBeUndefined();
-    expect(server.batches[1]!.patches[0]).toMatchObject({
-      id: root.id,
-      outputs: { answer: SECRET },
-    });
+it("does not wait for a parent posted before a restart", async () => {
+  const parent = run();
+  const child = run(parent);
+  queue.post("s1", writer(), child);
+  await uploaded();
+  queue.patch("s1", writer(), finish(parent));
+  await uploaded();
+  expect(batchWith(child.id, "posts")).toBe(0);
+  expect(batchWith(parent.id, "patches")).toBe(1);
+});
+
+it("loses nothing when the server fails five times then succeeds", async () => {
+  server.failuresLeft = 5;
+  const parent = run();
+  const child = run(parent);
+  queue.post("s1", writer(), parent);
+  queue.post("s1", writer(), child);
+  queue.flush();
+  await waitFor(() => server.failuresLeft < 3, "two failures");
+  queue.patch("s1", writer(), finish(child));
+  await uploaded();
+  expect(server.stored.get(parent.id)).toMatchObject({ name: "turn" });
+  expect(server.stored.get(child.id)).toMatchObject({
+    name: "tool",
+    outputs: { answer: SECRET },
   });
+  expect(logs.filter((line) => line.includes("retrying"))).toHaveLength(5);
+});
 
-  it("merges a patch into a post that has not been sent yet", async () => {
-    const root = run();
-    queue.post("s1", writer(), root);
-    queue.patch("s1", writer(), finish(root));
-    queue.flush();
-    await uploaded();
+it("drops only the run LangSmith rejects for good", async () => {
+  server.rejectMarker = "rejected-run";
+  const accepted = run();
+  const rejected = { ...run(), name: "rejected-run" };
+  queue.post("s1", writer(), accepted);
+  queue.post("s1", writer(), rejected);
+  await uploaded();
+  expect([...server.stored.keys()]).toEqual([accepted.id]);
+  expect(logs.filter((line) => line.startsWith("DROPPED"))).toEqual([
+    expect.stringContaining(rejected.id),
+  ]);
+});
 
-    expect(server.batches).toHaveLength(1);
-    expect(server.batches[0]!.patches).toEqual([]);
-    expect(server.batches[0]!.posts[0]).toMatchObject({ outputs: { answer: SECRET } });
-  });
+it("never sends inputs or outputs in metadata mode", async () => {
+  const root = run(undefined, "metadata");
+  queue.post("s1", writer(), root);
+  await uploaded();
+  queue.patch("s1", writer(), finish(root));
+  await uploaded();
+  expect(server.batches.map(({ patches }) => patches.length)).toEqual([0, 1]);
+  expect(server.batches.map(({ body }) => body.includes(SECRET))).toEqual([false, false]);
+});
 
-  it("does not wait for a parent posted before a restart", async () => {
-    const parent = run();
-    const child = run(parent);
-    queue.post("s1", writer(), child);
-    queue.flush();
-    await uploaded();
-    queue.patch("s1", writer(), finish(parent));
-    queue.flush();
-    await uploaded();
+it("uploads nothing for a run whose tracing is off", async () => {
+  const traced = run();
+  const untraced = run(undefined, "off");
+  queue.post("s1", writer(), untraced);
+  queue.patch("s1", writer(), finish(untraced));
+  queue.post("s1", writer(), traced);
+  await uploaded();
+  expect([...server.stored.keys()]).toEqual([traced.id]);
+});
 
-    expect(batchWith(child.id, "posts")).toBe(0);
-    expect(batchWith(parent.id, "patches")).toBe(1);
-  });
+it("sends at most 100 runs per request and 4 requests at once", async () => {
+  server.holdResponses = true;
+  for (const project of ["a", "b", "c", "d", "e"]) {
+    for (let count = 0; count < 101; count += 1) queue.post("s1", writer(project), run());
+  }
+  queue.flush();
+  await waitFor(() => server.batches.length === 4, "four requests");
+  server.release();
+  await uploaded();
+  expect(server.mostInFlight).toBe(4);
+  expect(server.batches.map(({ posts }) => posts.length).toSorted((a, b) => a - b)).toEqual([
+    1, 1, 1, 1, 1, 100, 100, 100, 100, 100,
+  ]);
+});
 
-  it("loses nothing when the server fails five times then succeeds", async () => {
-    server.failuresLeft = 5;
-    const parent = run();
-    const child = run(parent);
-    queue.post("s1", writer(), parent);
-    queue.post("s1", writer(), child);
-    queue.flush();
-    await waitFor(() => server.failuresLeft < 3, "two failures");
-    queue.patch("s1", writer(), finish(child));
-    queue.flush();
-    await uploaded();
+it("keeps every request under the writer's 8 MB limit", async () => {
+  const inputs = { prompt: "x".repeat(200_000) };
+  for (let count = 0; count < 100; count += 1) queue.post("s1", writer(), { ...run(), inputs });
+  await uploaded();
+  expect(Math.max(...server.batches.map(({ body }) => body.length))).toBeLessThan(8 * 1024 ** 2);
+});
 
-    expect(server.stored.get(parent.id)).toMatchObject({ name: "turn" });
-    expect(server.stored.get(child.id)).toMatchObject({
-      name: "tool",
-      outputs: { answer: SECRET },
-    });
-    expect(logs.filter((line) => line.includes("retrying"))).toHaveLength(5);
-  });
+it("is full at the run limit and empties once uploads drain", async () => {
+  for (let count = 1; count < MAX_QUEUED_RUNS; count += 1) queue.post("s1", writer(), run());
+  expect(queue.full()).toBe(false);
+  queue.post("s1", writer(), run());
+  expect(queue.full()).toBe(true);
+  await uploaded();
+  expect(queue.full()).toBe(false);
+});
 
-  it("drops only the run LangSmith rejects for good", async () => {
-    server.rejectMarker = "rejected-run";
-    const accepted = run();
-    const rejected = { ...run(), name: "rejected-run" };
-    queue.post("s1", writer(), accepted);
-    queue.post("s1", writer(), rejected);
-    queue.flush();
-    await uploaded();
-
-    expect([...server.stored.keys()]).toEqual([accepted.id]);
-    expect(logs.filter((line) => line.startsWith("DROPPED"))).toEqual([
-      expect.stringContaining(rejected.id),
-    ]);
-  });
-
-  it("never sends inputs or outputs in metadata mode", async () => {
-    const root = run(undefined, "metadata");
-    queue.post("s1", writer(), root);
-    queue.flush();
-    await uploaded();
-    queue.patch("s1", writer(), finish(root));
-    queue.flush();
-    await uploaded();
-
-    expect(server.batches.map(({ patches }) => patches.length)).toEqual([0, 1]);
-    expect(server.batches.map(({ body }) => body.includes(SECRET))).toEqual([false, false]);
-  });
-
-  it("uploads nothing for a run whose tracing is off", async () => {
-    const traced = run();
-    const untraced = run(undefined, "off");
-    queue.post("s1", writer(), untraced);
-    queue.patch("s1", writer(), finish(untraced));
-    queue.post("s1", writer(), traced);
-    queue.flush();
-    await uploaded();
-
-    expect([...server.stored.keys()]).toEqual([traced.id]);
-  });
-
-  it("sends at most 100 runs per request and 4 requests at once", async () => {
-    server.holdResponses = true;
-    for (const project of ["a", "b", "c", "d", "e"]) {
-      for (let count = 0; count < 101; count += 1) queue.post("s1", writer(project), run());
-    }
-    queue.flush();
-    await waitFor(() => server.batches.length === 4, "four requests");
-    server.release();
-    await uploaded();
-
-    expect(server.mostInFlight).toBe(4);
-    expect(server.batches.map(({ posts }) => posts.length).toSorted((a, b) => a - b)).toEqual([
-      1, 1, 1, 1, 1, 100, 100, 100, 100, 100,
-    ]);
-  });
-
-  it("is full at the run limit and empties once uploads drain", async () => {
-    for (let count = 1; count < MAX_QUEUED_RUNS; count += 1) queue.post("s1", writer(), run());
-    expect(queue.full()).toBe(false);
-    queue.post("s1", writer(), run());
-    expect(queue.full()).toBe(true);
-    queue.flush();
-    await uploaded();
-
-    expect(queue.full()).toBe(false);
-  });
-
-  it("is full at the byte limit and releases every byte once confirmed", async () => {
-    const big = run();
-    queue.post("s1", writer(), big);
-    queue.patch("s1", writer(), {
-      ...finish(big),
-      outputs: { answer: "x".repeat(MAX_QUEUED_BYTES) },
-    });
-    expect(queue.full()).toBe(true);
-    queue.flush();
-    await uploaded();
-    expect(queue.full()).toBe(false);
-
-    queue.post("s1", writer(), {
-      ...run(),
-      inputs: { prompt: "x".repeat(MAX_QUEUED_BYTES - 4096) },
-    });
-    expect(queue.full()).toBe(false);
-    queue.post("s1", writer(), { ...run(), inputs: { prompt: "x".repeat(8192) } });
-    expect(queue.full()).toBe(true);
-  });
+it("is full at the byte limit, counting a replaced update once, and releases every byte", async () => {
+  const patched = run();
+  queue.post("s1", writer(), patched);
+  const answer = { answer: "x".repeat(MAX_QUEUED_BYTES / 4) };
+  for (let count = 0; count < 5; count += 1)
+    queue.patch("s1", writer(), { ...finish(patched), outputs: answer });
+  expect(queue.full()).toBe(false);
+  const big = run();
+  queue.post("s1", writer(), big);
+  const whole = { answer: "x".repeat(MAX_QUEUED_BYTES) };
+  queue.patch("s1", writer(), { ...finish(big), outputs: whole });
+  expect(queue.full()).toBe(true);
+  await uploaded();
+  expect(queue.full()).toBe(false);
+  const nearlyFull = { prompt: "x".repeat(MAX_QUEUED_BYTES - 4096) };
+  queue.post("s1", writer(), { ...run(), inputs: nearlyFull });
+  expect(queue.full()).toBe(false);
+  queue.post("s1", writer(), { ...run(), inputs: { prompt: "x".repeat(8192) } });
+  expect(queue.full()).toBe(true);
 });
