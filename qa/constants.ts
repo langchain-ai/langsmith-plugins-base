@@ -75,8 +75,10 @@ export const CLAUDE_NON_PROMPT_PREFIX =
   /^\s*(<local-command|<bash-stdout|<bash-stderr|\[Request interrupted by user)/;
 export const CLAUDE_SHELL_PROMPT = /^\s*<bash-input>([\s\S]*)<\/bash-input>\s*$/;
 export const CLAUDE_SYSTEM_REMINDER = /<system-reminder>[\s\S]*?<\/system-reminder>/g;
+export const CLAUDE_TASK_SUMMARY = /^<task-notification>[\s\S]*?<summary>([\s\S]*?)<\/summary>/;
 export const CLAUDE_PEER_ORIGIN = "peer";
 export const CLAUDE_LOCAL_OUTPUT_PREFIX = /^\s*<local-command-stdout>/;
+export const CLAUDE_LOCAL_COMMAND_SUBTYPE = "local_command";
 export const HOOK_TIMEOUT_MS = 60_000;
 export const SESSION_START = { hook_event_name: "SessionStart", source: "startup" };
 export const SESSION_END = { hook_event_name: "SessionEnd", reason: "prompt_input_exit" };

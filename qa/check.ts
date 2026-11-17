@@ -30,19 +30,16 @@ export function checkRuns(scenario: Scenario, runs: TracedRun[]): string[] {
   const roots = runs
     .filter((run) => run.parent_run_id === null)
     .toSorted((left, right) => Date.parse(left.start_time) - Date.parse(right.start_time));
-  const expected = scenario.turns.filter((turn) => turn.stops !== false).length;
+  const expected = scenario.turns.length;
   if (roots.length !== expected) {
     failures.push(`expected ${expected} turns but found ${roots.length}`);
   }
   const numbered = roots.some((root) => turnNumber(root) !== undefined);
-  let traced = 0;
 
   for (const [index, turn] of scenario.turns.entries()) {
-    if (turn.stops === false) continue;
-    traced += 1;
     const root = numbered
-      ? roots.find((candidate) => turnNumber(candidate) === traced)
-      : roots[traced - 1];
+      ? roots.find((candidate) => turnNumber(candidate) === index + 1)
+      : roots[index];
     if (root === undefined) continue;
     const label = `turn ${index + 1}`;
     const children = descendantsOf(root, runs);
