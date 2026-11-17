@@ -31,6 +31,7 @@ export class RunCapture {
       end_time: isoTime(run.end_time),
       inputs: run.inputs,
       outputs: run.outputs,
+      extra: run.extra as TracedRun["extra"],
     }));
   }
 }

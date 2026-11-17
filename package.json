@@ -1,21 +1,21 @@
 {
   "name": "@langchain/plugins-base",
-  "version": "0.6.5",
+  "version": "0.6.6",
   "description": "Shared runtime and build pipeline for LangChain plugins",
   "keywords": [
     "claude-code",
     "codex",
     "langsmith"
   ],
-  "homepage": "https://github.com/langchain-ai/langsmith-plugin-binary#readme",
+  "homepage": "https://github.com/langchain-ai/langsmith-plugins-base#readme",
   "bugs": {
-    "url": "https://github.com/langchain-ai/langsmith-plugin-binary/issues"
+    "url": "https://github.com/langchain-ai/langsmith-plugins-base/issues"
   },
   "license": "MIT",
   "author": "LangChain",
   "repository": {
     "type": "git",
-    "url": "https://github.com/langchain-ai/langsmith-plugin-binary.git"
+    "url": "https://github.com/langchain-ai/langsmith-plugins-base.git"
   },
   "bin": {
     "langsmith-plugin-binary": "dist/cli.js"

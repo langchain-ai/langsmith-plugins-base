@@ -69,6 +69,24 @@ describe("checkRuns", () => {
     expect(checkRuns(scenario, runs)).toContain("expected 2 turns but found 1");
   });
 
+  it("pairs each turn with its own trace when a turn that never stopped left none", () => {
+    const [first, last] = scenario.turns;
+    const skipped = { prompt: "/clear", command: "", minTools: 0, stops: false };
+    const numbered = healthyRuns().map((existing) =>
+      existing.parent_run_id === null
+        ? { ...existing, extra: { metadata: { turn_number: existing.id === "r1" ? 1 : 2 } } }
+        : existing,
+    );
+    expect(checkRuns({ ...scenario, turns: [first!, skipped, last!] }, numbered)).toEqual([]);
+    const lost = { ...skipped, stops: true };
+    const renumbered = numbered.map((existing) =>
+      existing.id === "r2" ? { ...existing, extra: { metadata: { turn_number: 3 } } } : existing,
+    );
+    expect(checkRuns({ ...scenario, turns: [first!, lost, last!] }, renumbered)).toEqual([
+      "expected 3 turns but found 2",
+    ]);
+  });
+
   it("catches a turn that lost its user prompt", () => {
     expect(checkRuns(scenario, withChange("r2", { inputs: {} }))).toEqual([
       "turn 2 is missing the user prompt",

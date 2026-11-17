@@ -1,4 +1,4 @@
-import type { Endpoints, TypingPace } from "./models.ts";
+import type { AgentName, Endpoints, TypingPace } from "./models.ts";
 
 export const DEV_ENDPOINT = "https://dev.api.smith.langchain.com";
 export const GATEWAY_URL = "https://gateway.smith.langchain.com";
@@ -33,7 +33,21 @@ export const RUN_QUERY_LIMIT = 100;
 
 export const STOP_EVENT = "Stop";
 export const PROMPT_EVENT = "UserPromptSubmit";
+export const PRE_TOOL_EVENT = "PreToolUse";
+export const POST_TOOL_EVENT = "PostToolUse";
+export const TOOL_START_EVENT: Record<AgentName, string> = {
+  claude: PRE_TOOL_EVENT,
+  codex: POST_TOOL_EVENT,
+};
+export const REPLAY_PERMISSION_MODE = "default";
+export const SUBAGENT_STOP_EVENT = "SubagentStop";
 export const SKILL_TOOL_NAME = "Skill";
+export const SUBAGENT_BACKGROUND_STATUS = "async_launched";
+export const DEFAULT_SUBAGENT_TYPE = "general-purpose";
+export const TRANSCRIPT_EXTENSION = ".jsonl";
+export const SUBAGENTS_FOLDER = "subagents";
+export const SUBAGENT_FILE_PREFIX = "agent-";
+export const SUBAGENT_METADATA_EXTENSION = ".meta.json";
 export const RECORDED_EVENTS = ["UserPromptSubmit", "Stop"];
 
 export const FAKE_CALL_ID_PREFIX = "toolu_qa_";
@@ -61,12 +75,14 @@ export const CLAUDE_NON_PROMPT_PREFIX =
   /^\s*(<local-command|<bash-stdout|<bash-stderr|\[Request interrupted by user)/;
 export const CLAUDE_SHELL_PROMPT = /^\s*<bash-input>([\s\S]*)<\/bash-input>\s*$/;
 export const CLAUDE_SYSTEM_REMINDER = /<system-reminder>[\s\S]*?<\/system-reminder>/g;
+export const CLAUDE_PEER_ORIGIN = "peer";
 export const CLAUDE_LOCAL_OUTPUT_PREFIX = /^\s*<local-command-stdout>/;
 export const HOOK_TIMEOUT_MS = 60_000;
 export const SESSION_START = { hook_event_name: "SessionStart", source: "startup" };
 export const SESSION_END = { hook_event_name: "SessionEnd", reason: "prompt_input_exit" };
 export const TURN_SETTLE_TIMEOUT_MS = 15_000;
 export const TURN_SETTLE_POLL_MS = 250;
+export const SESSION_TIMEOUT_MS = 120 * 60_000;
 export const PROMPT_MATCH_CHARS = 80;
 export const CODEX_TOOL_CALL_TYPES = new Set(["function_call", "custom_tool_call"]);
 export const CODEX_TOOL_OUTPUT_TYPES = new Set(["function_call_output", "custom_tool_call_output"]);
@@ -93,3 +109,4 @@ export const ENGINE_EXIT_TIMEOUT_MS = 15_000;
 export const ENGINE_EXIT_POLL_MS = 250;
 export const BYTES_PER_MEGABYTE = 1024 * 1024;
 export const USAGE_PERCENTILES = [50, 95, 99];
+export const USAGE_LINE = /^usage .+: (\d+) ms CPU, ([\d.]+) MB peak memory$/gm;

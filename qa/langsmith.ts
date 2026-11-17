@@ -33,6 +33,7 @@ async function listRuns(apiKey: string, project: string, since: string): Promise
       "end_time",
       "inputs",
       "outputs",
+      "extra",
     ],
   });
   return result.runs;
@@ -41,6 +42,14 @@ async function listRuns(apiKey: string, project: string, since: string): Promise
 export function uploadsSettled(runs: TracedRun[], expectedRoots: number): boolean {
   const roots = runs.filter((run) => run.parent_run_id === null);
   return roots.length >= expectedRoots && roots.every((run) => run.end_time !== null);
+}
+
+export function turnUploaded(runs: TracedRun[], finishedTurns: number): boolean {
+  const roots = runs
+    .filter((run) => run.parent_run_id === null)
+    .toSorted((left, right) => Date.parse(left.start_time) - Date.parse(right.start_time));
+  const newest = roots.at(-1);
+  return roots.length >= finishedTurns && newest !== undefined && newest.end_time !== null;
 }
 
 export async function waitForRuns(
