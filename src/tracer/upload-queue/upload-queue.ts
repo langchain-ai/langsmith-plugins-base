@@ -2,7 +2,7 @@ import { authHint, isRetryable, rejection } from "../../tracing/delivery/retry.j
 import { createLangSmithUploadWriter } from "../../tracing/upload/index.js";
 import type { LangSmithUploadWriterOptions } from "../../tracing/upload/models.js";
 import { describe, failureStatus } from "../../utils/errors.js";
-import { fillTemplate } from "../../utils/format.js";
+import { fillTemplate, sortedKeys } from "../../utils/format.js";
 import type {
   RunPatch,
   RunPost,
@@ -38,7 +38,7 @@ export function createUploadQueue(
   let retryTimer: NodeJS.Timeout | undefined;
 
   function lanesFor(options: LangSmithUploadWriterOptions): UploadLane[] {
-    const key = JSON.stringify(options);
+    const key = JSON.stringify(options, sortedKeys);
     const known = lanesByWriter.get(key);
     if (known !== undefined) return known;
     let created: UploadLane[] = [];
@@ -70,10 +70,11 @@ export function createUploadQueue(
     return run;
   }
 
-  function hold(run: QueuedRun, content: RunPost | RunPatch): void {
-    const bytes = Buffer.byteLength(JSON.stringify(content));
-    run.bytes += bytes;
-    queuedBytes += bytes;
+  function hold(run: QueuedRun): void {
+    const held = [run.post, run.patch, run.sending?.post, run.sending?.patch];
+    const bytes = Buffer.byteLength(JSON.stringify(held));
+    queuedBytes += bytes - run.bytes;
+    run.bytes = bytes;
   }
 
   function forget(run: QueuedRun): void {
@@ -97,6 +98,7 @@ export function createUploadQueue(
   function takeBatch(lane: UploadLane): QueuedRun[] {
     const batch: QueuedRun[] = [];
     const inBatch = new Set<string>();
+    let bytes = 0;
     for (const run of lane.ready) {
       const parent = parentKey(run);
       if (parent !== undefined && !inBatch.has(parent) && parentUnacknowledged(parent)) {
@@ -107,8 +109,10 @@ export function createUploadQueue(
         continue;
       }
       if (run.sendAlone && batch.length > 0) continue;
+      if (batch.length > 0 && bytes + run.bytes > lane.writer.batchLimits.maxBytes) break;
       lane.ready.delete(run);
       batch.push(run);
+      bytes += run.bytes;
       inBatch.add(run.key);
       if (run.sendAlone || batch.length >= lane.writer.batchLimits.maxRuns) break;
     }
@@ -118,6 +122,7 @@ export function createUploadQueue(
   function acknowledge(run: QueuedRun): void {
     const postedNow = run.sending?.post !== undefined;
     run.sending = undefined;
+    hold(run);
     if (run.post !== undefined || run.patch !== undefined) run.lane.ready.add(run);
     else forget(run);
     if (postedNow) releaseChildren(run);
@@ -219,9 +224,9 @@ export function createUploadQueue(
     for (const lane of lanesFor(options)) {
       const queued = track(sessionId, lane, run.id);
       if (queued.post !== undefined || queued.sending?.post !== undefined) continue;
-      hold(queued, run);
       queued.post = mergeRun(mergeRun(run, queued.sending?.patch), queued.patch);
       queued.patch = undefined;
+      hold(queued);
       if (queued.sending === undefined) lane.ready.add(queued);
     }
   }
@@ -230,12 +235,13 @@ export function createUploadQueue(
     if (update.tracingMode === "off") return;
     for (const lane of lanesFor(options)) {
       const queued = track(sessionId, lane, update.id);
-      hold(queued, update);
       if (queued.post !== undefined) {
         queued.post = mergeRun(queued.post, update);
+        hold(queued);
         continue;
       }
       queued.patch = queued.patch === undefined ? update : mergeRun(queued.patch, update);
+      hold(queued);
       if (queued.sending === undefined) lane.ready.add(queued);
     }
   }
