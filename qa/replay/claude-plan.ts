@@ -1,4 +1,5 @@
 import {
+  CLAUDE_COMMAND_PROMPT,
   CLAUDE_LOCAL_COMMAND_SUBTYPE,
   CLAUDE_LOCAL_OUTPUT_PREFIX,
   CLAUDE_NON_PROMPT_PREFIX,
@@ -32,7 +33,7 @@ function blocks(line: TranscriptLine, type: string): TranscriptLine[] {
   return Array.isArray(content) ? content.filter((block) => block?.type === type) : [];
 }
 
-function isUserText(line: TranscriptLine | undefined): line is TranscriptLine {
+function isUserText(line: TranscriptLine | undefined): line is TranscriptLine & { type: "user" } {
   if (
     line?.type !== "user" ||
     line.isCompactSummary ||
@@ -40,7 +41,8 @@ function isUserText(line: TranscriptLine | undefined): line is TranscriptLine {
     line.queueTranscriptOnly
   )
     return false;
-  if (line.isMeta && line.origin?.kind !== CLAUDE_PEER_ORIGIN) return false;
+  if (line.isMeta && line.origin?.kind !== CLAUDE_PEER_ORIGIN && line.turnPosition === undefined)
+    return false;
   return blocks(line, "tool_result").length === 0;
 }
 
@@ -59,7 +61,13 @@ function isPrompt(lines: TranscriptLine[], index: number): boolean {
 
 function promptText(line: TranscriptLine): string {
   const text = textOf(line.message?.content).replace(CLAUDE_SYSTEM_REMINDER, "").trim();
-  return CLAUDE_SHELL_PROMPT.exec(text)?.[1] ?? CLAUDE_TASK_SUMMARY.exec(text)?.[1]?.trim() ?? text;
+  const command = CLAUDE_COMMAND_PROMPT.exec(text);
+  if (command !== null) return `${command[1]?.trim()} ${command[2]?.trim() ?? ""}`.trim();
+  return (
+    CLAUDE_SHELL_PROMPT.exec(text)?.[1]?.trim() ??
+    CLAUDE_TASK_SUMMARY.exec(text)?.[1]?.trim() ??
+    text
+  );
 }
 
 function endsTurn(lines: TranscriptLine[], index: number): boolean {
@@ -68,8 +76,8 @@ function endsTurn(lines: TranscriptLine[], index: number): boolean {
     return false;
   const next = lines
     .slice(index + 1)
-    .find((later) => later.type === "assistant" || isUserText(later));
-  return next === undefined || next.message?.id !== line.message?.id;
+    .find((later) => later.type === "assistant" || isUserText(later) || later.turnCompanion);
+  return next === undefined || (!next.turnCompanion && next.message?.id !== line.message?.id);
 }
 
 function preToolUse(use: TranscriptLine): Record<string, unknown> {
