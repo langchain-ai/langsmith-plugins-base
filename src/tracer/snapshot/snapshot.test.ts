@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
-import type { SessionSnapshot } from "../models.js";
+import type { SessionSnapshot } from "../types.js";
 import { loadSnapshot, writeSnapshot } from "./snapshot.js";
 
 vi.mock("node:fs", { spy: true });

@@ -1,5 +1,5 @@
 import { readSync } from "node:fs";
-import type { Bookmark, LineIdReader } from "../models.js";
+import type { Bookmark, LineIdReader } from "../types.js";
 import { parseLine, scanLines } from "./lines.js";
 import { BOOKMARK_CHECK_BYTES } from "../constants.js";
 

@@ -33,7 +33,7 @@ import type {
   LegacyOpenTurn,
   LegacyRecovery,
   LegacySession,
-} from "../models.js";
+} from "../types.js";
 import { tracerPaths } from "../paths.js";
 import { readNewLines } from "../reader/reader.js";
 import { loadSnapshot, writeSnapshot } from "./snapshot.js";
@@ -123,6 +123,7 @@ async function sendOldQueue(
   storageRoot: string,
   integration: CodingAgentIntegration,
   sessions: LegacySession[],
+  resumed: Set<string>,
   log: (line: string) => void,
 ): Promise<boolean> {
   if (!existsSync(storageRoot)) return true;
@@ -142,7 +143,8 @@ async function sendOldQueue(
       dropped.uploads += uploads;
       continue;
     }
-    const recovery = { sessionId, writer, recover, openTurn };
+    const handedOver = resumed.has(sessionId) ? openTurn : undefined;
+    const recovery = { sessionId, writer, recover, openTurn: handedOver };
     const done = await sendOldSession(storageRoot, integration, recovery, dropped).catch(
       (error: unknown) => {
         log(`could not send old session ${sessionId}: ${describe(error)}`);
@@ -155,6 +157,15 @@ async function sendOldQueue(
   if (sessionCount > 0)
     log(fillTemplate(LEGACY_DROPPED_WARNING, { ...dropped, sessions: sessionCount }));
   return sent;
+}
+
+function resumedSessions(paths: TracerPaths): Set<string> {
+  const { sessions } = loadSnapshot(paths.snapshot).snapshot;
+  return new Set(
+    Object.values(sessions)
+      .filter(({ builderState }) => builderState !== undefined)
+      .map(({ sessionId }) => sessionId),
+  );
 }
 
 function lockHolders(folder: string): number[] | undefined {
@@ -197,7 +208,8 @@ export function upgradeLegacyState(
   if (!existsSync(paths.snapshot)) importSessions(options, sessions, paths);
   const integration = options.integration as CodingAgentIntegration;
   const stateClaims = `${legacyState}${FILE_LOCK_DIRECTORY_SUFFIX}`;
-  const sending = sendOldQueue(legacyEngine, integration, sessions, log)
+  const resumed = resumedSessions(paths);
+  const sending = sendOldQueue(legacyEngine, integration, sessions, resumed, log)
     .then((sent) => sent && oldWorkersStopped([legacyEngine, stateClaims]))
     .catch(() => false);
   const timeout = delay(LEGACY_QUEUE_WAIT_MS, false, { ref: false });

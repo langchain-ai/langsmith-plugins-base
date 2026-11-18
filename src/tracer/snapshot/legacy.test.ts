@@ -14,7 +14,7 @@ import {
   writerFor,
 } from "../../test-support/tracing/lifecycle.js";
 import { createReconstructionWorker } from "../../tracing/reconstruction/index.js";
-import type { TranscriptBuilder, LegacySession } from "../models.js";
+import type { TranscriptBuilder, LegacySession } from "../types.js";
 import { upgradeLegacyState } from "./legacy.js";
 import { loadSnapshot, writeSnapshot } from "./snapshot.js";
 
@@ -133,12 +133,26 @@ it("runs each old session's rebuild code once, handing its open turn to the new 
   const stateFolder = oldInstall();
   const { endpoint, oldEngine } = await queueOldRun(stateFolder, true);
   const recover = vi.fn(async () => void (await oldEngine.drain()));
-  const oldSession = sendingTo(endpoint.url, { recover, openTurn: { rootRunId: ROOT_ID } });
+  const turn = { rootRunId: ROOT_ID, builderState: 1 };
+  const oldSession = sendingTo(endpoint.url, { recover, openTurn: turn });
   const warnings = await upgrade(stateFolder, [oldSession]);
   expect(recover).toHaveBeenCalledOnce();
   expect(warnings).toEqual([]);
   expect(posted(endpoint)).toEqual([["POST", ROOT_ID]]);
   expect(fs.readdirSync(stateFolder)).toEqual(["langsmith_plugins_base"]);
+  await endpoint.close();
+});
+
+it("leaves an open turn the new builder could not pick back up for the old engine to close", async () => {
+  const stateFolder = oldInstall();
+  const { endpoint } = await queueOldRun(stateFolder, true);
+  const queued = () => fs.readdirSync(join(stateFolder, "langsmith_engine"), { recursive: true });
+  const before = queued();
+  let atRecovery: unknown[] = [];
+  const recover = vi.fn(async () => void (atRecovery = queued()));
+  const turn = { rootRunId: ROOT_ID, afterLineId: "gone", builderState: 1 };
+  await upgrade(stateFolder, [sendingTo(endpoint.url, { recover, openTurn: turn })]);
+  expect(atRecovery.toSorted()).toEqual(before.toSorted());
   await endpoint.close();
 });
 
