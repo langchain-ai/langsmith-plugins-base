@@ -330,6 +330,33 @@ it("takes over a lock last refreshed before the boot even if its process id is n
   await waitFor(() => statSync(box.paths.lock).mtimeMs > 1_000, "the worker to refresh its lock");
 });
 
+it("writes no API key to the notes or snapshot and uploads with the worker's own keys", async () => {
+  const box = sandbox();
+  const destinations = [
+    { apiKey: "lsv2_hook_key", apiUrl: "https://example.test", projectName: "p" },
+  ];
+  const replicas = [{ apiKey: "lsv2_hook_replica_key", apiUrl: "https://replica.test" }];
+  hook(box, { ...note(box, "Start"), writer: { destinations, replicas, redact: false } });
+  appendFileSync(box.main, transcriptLine("L1", { posts: true }));
+  expect(await recorded(box, 3)).toEqual([
+    "s note Start",
+    "s line L1",
+    "s post L1 redact false key lsv2_worker_key key lsv2_worker_replica_key",
+  ]);
+  await waitFor(() => existsSync(box.paths.snapshot), "the snapshot to save");
+  for (const path of [box.paths.notes, box.paths.snapshot])
+    expect(readFileSync(path, "utf8")).not.toMatch(/lsv2_/);
+});
+
+it("keeps a profile login's session on its login instead of the worker's key", async () => {
+  const box = sandbox();
+  const login = { configPath: join(box.home, "config.yaml"), profile: "work" };
+  const destinations = [{ login, apiUrl: "https://example.test", projectName: "p" }];
+  hook(box, { ...note(box, "Start"), writer: { destinations, redact: false } });
+  appendFileSync(box.main, transcriptLine("L1", { posts: true }));
+  expect(await recorded(box, 3)).toEqual(["s note Start", "s line L1", "s post L1 redact false"]);
+});
+
 it("resumes from the saved notes offset after a restart without retaking old notes", async () => {
   const box = sandbox();
   hook(box, note(box, "Start"));

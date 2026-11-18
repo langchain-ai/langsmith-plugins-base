@@ -37,6 +37,7 @@ import type {
 import { tracerPaths } from "../paths.js";
 import { readNewLines } from "../reader/reader.js";
 import { loadSnapshot, writeSnapshot } from "./snapshot.js";
+import { withoutCredentials } from "../worker/credentials.js";
 
 function transcriptEnd(path: string, lineId: TranscriptBuilder["lineId"]): Bookmark {
   const bookmark: Bookmark = { path, offset: 0 };
@@ -69,7 +70,7 @@ function importSessions(options: LegacyImport, sessions: LegacySession[], paths:
     saved.sessions[sessionId] = {
       sessionId,
       integration: options.integration,
-      writer,
+      writer: withoutCredentials(writer),
       bookmarks: { [transcriptPath]: resume ?? transcriptEnd(transcriptPath, lineId) },
       pendingNotes: [],
       builderState: resume === undefined ? undefined : openTurn?.builderState,

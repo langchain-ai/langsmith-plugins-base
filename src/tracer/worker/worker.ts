@@ -24,10 +24,16 @@ import type {
 } from "../types.js";
 import { refreshLock, releaseLock, takeLock, takeLockFromOlder } from "./lock.js";
 import { NotesFollower } from "../notes/notes.js";
+import { withCredentials } from "./credentials.js";
+import type { LangSmithUploadWriterOptions } from "../../tracing/upload/models.js";
 import { canForget, isIdle, positionNote, readPass, snapshotOf } from "./session.js";
 
 class TracerWorker {
   private readonly sessions = new Map<string, WorkerSession>();
+  private readonly writersWithKeys = new WeakMap<
+    LangSmithUploadWriterOptions,
+    LangSmithUploadWriterOptions
+  >();
   private readonly scheduled = new Set<string>();
   private readonly waitingForUploads = new Set<string>();
   private readonly queue: UploadQueue;
@@ -80,6 +86,14 @@ class TracerWorker {
     this.ticker = setInterval(() => this.tick(), TICK_MS);
   }
 
+  private withKeys(writer: LangSmithUploadWriterOptions): LangSmithUploadWriterOptions {
+    const known = this.writersWithKeys.get(writer);
+    if (known !== undefined) return known;
+    const keyed = withCredentials(writer, this.options.credentials);
+    this.writersWithKeys.set(writer, keyed);
+    return keyed;
+  }
+
   private createSession({ builderState, ...saved }: SessionSnapshot): WorkerSession {
     const session: WorkerSession = {
       ...saved,
@@ -89,8 +103,9 @@ class TracerWorker {
         savedState: builderState,
         tracingMode: saved.tracingMode,
         sink: {
-          post: (run) => this.queue.post(session.sessionId, session.writer, run),
-          patch: (patch) => this.queue.patch(session.sessionId, session.writer, patch),
+          post: (run) => this.queue.post(session.sessionId, this.withKeys(session.writer), run),
+          patch: (patch) =>
+            this.queue.patch(session.sessionId, this.withKeys(session.writer), patch),
         },
       }),
     };

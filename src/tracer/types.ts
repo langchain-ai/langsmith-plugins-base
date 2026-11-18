@@ -136,12 +136,14 @@ export interface StartTracerOptions {
   agentStateFolder: string;
   integration: string;
   version: string;
+  credentials: LangSmithUploadWriterOptions;
   createBuilder: CreateTranscriptBuilder;
   readLegacySessions: (stateFile: string) => LegacySession[];
 }
 
 export interface WorkerOptions {
   paths: TracerPaths;
+  credentials: LangSmithUploadWriterOptions;
   createBuilder: CreateTranscriptBuilder;
   createQueue: (log: (line: string) => void) => UploadQueue;
   readNewLines: ReadNewLines;
