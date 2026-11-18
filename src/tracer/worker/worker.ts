@@ -24,7 +24,7 @@ import type {
 } from "../types.js";
 import { releaseLock, takeLock, takeLockFromOlder } from "./lock.js";
 import { NotesFollower } from "../notes/notes.js";
-import { isIdle, positionNote, readPass, snapshotOf } from "./session.js";
+import { canForget, isIdle, positionNote, readPass, snapshotOf } from "./session.js";
 
 class TracerWorker {
   private readonly sessions = new Map<string, WorkerSession>();
@@ -83,6 +83,7 @@ class TracerWorker {
   private createSession({ builderState, ...saved }: SessionSnapshot): WorkerSession {
     const session: WorkerSession = {
       ...saved,
+      lastNoteAt: saved.lastNoteAt ?? Date.now(),
       builder: this.options.createBuilder({
         sessionId: saved.sessionId,
         savedState: builderState,
@@ -98,13 +99,15 @@ class TracerWorker {
 
   private receive(note: PositionedHookNote): void {
     this.lastActivity = Date.now();
+    const parked = this.saved.parked?.[note.sessionId];
+    delete this.saved.parked?.[note.sessionId];
     const session =
       this.sessions.get(note.sessionId) ??
       this.createSession({
         sessionId: note.sessionId,
         integration: note.integration,
         writer: note.writer,
-        bookmarks: {},
+        bookmarks: parked ?? {},
         pendingNotes: [],
         builderState: undefined,
         ended: false,
@@ -112,6 +115,7 @@ class TracerWorker {
     this.sessions.set(session.sessionId, session);
     session.integration = note.integration;
     session.ended = false;
+    session.lastNoteAt = this.lastActivity;
     if (note.transcriptPath !== undefined)
       session.bookmarks[note.transcriptPath] ??= { path: note.transcriptPath, offset: 0 };
     session.pendingNotes.push(positionNote(session, note));
@@ -165,15 +169,19 @@ class TracerWorker {
     if (!this.unsaved || this.notes.rotating()) return;
     const sessions = [...this.sessions.values()];
     if (sessions.some((session) => this.queue.pendingFor(session.sessionId) > 0)) return;
-    for (const session of sessions)
-      if (session.ended && session.pendingNotes.length === 0)
-        this.sessions.delete(session.sessionId);
+    const parked = { ...this.saved.parked };
+    for (const session of sessions) {
+      if (!canForget(session)) continue;
+      if (!session.ended) parked[session.sessionId] = session.bookmarks;
+      this.sessions.delete(session.sessionId);
+    }
     this.saved = {
       version: SNAPSHOT_VERSION,
       sessions: Object.fromEntries(
         [...this.sessions.values()].map((s) => [s.sessionId, snapshotOf(s)]),
       ),
       notes: this.notes.bookmark(),
+      parked,
     };
     this.unsaved = false;
     this.attempt("could not save the snapshot", () => {

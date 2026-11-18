@@ -21,6 +21,7 @@ it("rereads lines a pending note held back after the real reader moved past them
     integration: "claude",
     writer,
     ended: false,
+    lastNoteAt: 0,
     bookmarks: {
       [main]: { path: main, offset: mainBeforeStop, lastLineId: "L1" },
       [subagent]: { path: subagent, offset: 0 },
