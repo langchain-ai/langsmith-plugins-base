@@ -7,6 +7,7 @@ import {
   readFileSync,
   statSync,
   unlinkSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -316,6 +317,17 @@ it("sets aside a session with no notes for a day and picks it up where it left o
   ]);
   const parked = () => JSON.parse(readFileSync(box.paths.snapshot, "utf8")).parked;
   await waitFor(() => !("stale" in parked()), "the resumed session to leave the parked list");
+});
+
+it("takes over a lock last refreshed before the boot even if its process id is now in use", async () => {
+  const box = sandbox();
+  hook(box, note(box, "Start"), false);
+  writeFileSync(box.paths.lock, JSON.stringify({ pid: process.pid, version: VERSION }));
+  utimesSync(box.paths.lock, 1, 1);
+  hook(box, note(box, "Next"));
+  expect(await recorded(box, 2)).toEqual(["s note Start", "s note Next"]);
+  utimesSync(box.paths.lock, 1, 1);
+  await waitFor(() => statSync(box.paths.lock).mtimeMs > 1_000, "the worker to refresh its lock");
 });
 
 it("resumes from the saved notes offset after a restart without retaking old notes", async () => {

@@ -22,7 +22,7 @@ import type {
   StopWorkerRequest,
   WorkerSession,
 } from "../types.js";
-import { releaseLock, takeLock, takeLockFromOlder } from "./lock.js";
+import { refreshLock, releaseLock, takeLock, takeLockFromOlder } from "./lock.js";
 import { NotesFollower } from "../notes/notes.js";
 import { canForget, isIdle, positionNote, readPass, snapshotOf } from "./session.js";
 
@@ -212,6 +212,7 @@ class TracerWorker {
   }
 
   private tick(): void {
+    this.attempt("could not refresh the lock", () => refreshLock(this.options.paths.lock));
     this.takeNotes();
     this.queue.flush();
     this.resumeReadsAfterUploads();
