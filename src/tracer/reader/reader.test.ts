@@ -114,8 +114,14 @@ it("starts from the beginning and says so when the line id is gone", () => {
   expect(notices).toEqual([`line b is gone from ${bookmark.path}, reading from the start`]);
 });
 
-it("does not re-read lines without an id that followed the last id after a restart", () => {
-  const bookmark = readOnce(`${entry("a")}{"type":"summary"}\n`);
-  appendFileSync(bookmark.path, entry("b"));
-  expect(readAll({ ...bookmark })).toMatchObject({ ids: ["b"], notices: [] });
-});
+it.each([
+  ["a short", ""],
+  ["over a megabyte of", "x".repeat(1_100_000)],
+])(
+  "does not re-read %s lines without an id that followed the last id after a restart",
+  (_, padding) => {
+    const bookmark = readOnce(`${entry("a")}{"type":"summary","padding":"${padding}"}\n`);
+    appendFileSync(bookmark.path, entry("b"));
+    expect(readAll({ ...bookmark })).toMatchObject({ ids: ["b"], notices: [] });
+  },
+);
