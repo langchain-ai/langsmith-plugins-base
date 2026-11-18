@@ -1,0 +1,35 @@
+src/tracing/lifecycle/projection.ts
+  s_87ed7ecfb581b9::t_474b549e20d5f7 30,226,269-275,278-282,322-324,418-426
+src/tracing/upload/upload.test.ts
+  s_87ed7ecfb581b9::t_e89eb75b96d7fc 70-76,438,450,478,484
+  s_87ed7ecfb581b9::t_3c5d3b75f0f962 434-437,439-449,451-477,479-483,485-499
+src/tracing/upload/run-status.ts
+  s_87ed7ecfb581b9::t_c48d30931e878e 1-8
+src/tracing/lifecycle/run-status.test.ts
+  s_87ed7ecfb581b9::t_3c5d3b75f0f962 1-38,47-79
+  s_87ed7ecfb581b9::t_e89eb75b96d7fc 39-46
+src/tracing/upload/models.ts
+  s_87ed7ecfb581b9::t_474b549e20d5f7 26-27,41,62
+src/tracing/upload/upload.ts
+  s_87ed7ecfb581b9::t_474b549e20d5f7 48,283-285,339-342
+src/tracing/upload/index.ts
+  s_87ed7ecfb581b9::t_12c3e20ddc335a 9
+src/tracing/upload/constants.ts
+  s_87ed7ecfb581b9::t_474b549e20d5f7 48
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "abde8de5b7d248820180ae2792963980534937f6",
+  "prompts": {},
+  "sessions": {
+    "s_87ed7ecfb581b9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c0760b00-dfe8-4f39-810b-02f77cceba70",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "Kiewan Villatel <kiewan@langchain.dev>"
+    }
+  }
+}
