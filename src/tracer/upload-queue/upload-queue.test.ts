@@ -9,7 +9,11 @@ import { startFakeLangSmith } from "../../test-support/tracing/fake-langsmith.js
 import { waitFor } from "../../test-support/wait.js";
 import type { LangSmithUploadWriterOptions } from "../../tracing/upload/models.js";
 import type { RunPatch, RunPost, TracingMode, UploadQueue } from "../types.js";
-import { MAX_QUEUED_BYTES, MAX_QUEUED_RUNS } from "../constants.js";
+import {
+  MAX_QUEUED_BYTES,
+  MAX_QUEUED_RUNS,
+  UPLOAD_QUEUE_RETRIES_BEFORE_SPLIT,
+} from "../constants.js";
 import { createUploadQueue } from "./upload-queue.js";
 
 const SECRET = "synthetic-private-marker";
@@ -178,6 +182,27 @@ it("drops only the run LangSmith rejects for good", async () => {
   expect([...server.stored.keys()]).toEqual([accepted.id]);
   expect(logs.filter((line) => line.startsWith("DROPPED"))).toEqual([
     expect.stringContaining(rejected.id),
+  ]);
+});
+
+it("splits a batch that keeps timing out, then drops only the run that fails on its own", async () => {
+  server.unavailableMarker = "unavailable-run";
+  const accepted = run();
+  const unavailable = { ...run(), name: "unavailable-run" };
+  queue.post("s1", writer(), accepted);
+  queue.post("s1", writer(), unavailable);
+  await uploaded();
+  expect([...server.stored.keys()]).toEqual([accepted.id]);
+  expect(server.batches.filter(({ body }) => body.includes(accepted.id))).toHaveLength(
+    UPLOAD_QUEUE_RETRIES_BEFORE_SPLIT + 2,
+  );
+  expect(server.batches.filter(({ body }) => body.includes(unavailable.id))).toHaveLength(
+    UPLOAD_QUEUE_RETRIES_BEFORE_SPLIT + 2,
+  );
+  expect(logs.filter((line) => line.startsWith("DROPPED"))).toEqual([
+    expect.stringMatching(
+      `^DROPPED run ${unavailable.id} of session s1 on \\S+, since it failed again when sent on its own: `,
+    ),
   ]);
 });
 

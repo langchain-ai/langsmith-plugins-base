@@ -15,12 +15,13 @@ import {
   MAX_QUEUED_BYTES,
   MAX_QUEUED_RUNS,
   UPLOAD_QUEUE_DROPPED_LOG,
+  UPLOAD_QUEUE_GAVE_UP_LOG,
   UPLOAD_QUEUE_MAX_REQUESTS_IN_FLIGHT,
   UPLOAD_QUEUE_POLICY,
   UPLOAD_QUEUE_RETRY_LOG,
   UPLOAD_QUEUE_WRITER_FAILED_LOG,
 } from "../constants.js";
-import { parentKey, requeue, runKey, startSending } from "./queued-runs.js";
+import { parentKey, requeue, retriedEnough, runKey, startSending } from "./queued-runs.js";
 import { mergeRun } from "./submissions.js";
 
 export function createUploadQueue(
@@ -64,7 +65,15 @@ export function createUploadQueue(
     const key = runKey(lane, runId);
     const known = runs.get(key);
     if (known !== undefined) return known;
-    const run: QueuedRun = { key, runId, sessionId, lane, sendAlone: false, bytes: 0 };
+    const run: QueuedRun = {
+      key,
+      runId,
+      sessionId,
+      lane,
+      sendAlone: false,
+      failedUploads: 0,
+      bytes: 0,
+    };
     runs.set(key, run);
     pendingBySession.set(sessionId, (pendingBySession.get(sessionId) ?? 0) + 1);
     return run;
@@ -128,17 +137,8 @@ export function createUploadQueue(
     if (postedNow) releaseChildren(run);
   }
 
-  function drop(run: QueuedRun, error: unknown): void {
-    const { reason, status } = rejection(error);
-    log(
-      fillTemplate(UPLOAD_QUEUE_DROPPED_LOG, {
-        runId: run.runId,
-        sessionId: run.sessionId,
-        destination: run.lane.destinationId,
-        reason,
-        hint: authHint(status),
-      }),
-    );
+  function drop(run: QueuedRun, line: string): void {
+    log(line);
     run.sending = undefined;
     forget(run);
     releaseChildren(run);
@@ -167,10 +167,11 @@ export function createUploadQueue(
         (failure: unknown) => failure ?? new Error(),
       );
     inFlight -= 1;
+    const retryable = isRetryable(error) && !(error instanceof TypeError);
     if (error === undefined) {
       lane.failures = 0;
       for (const run of batch) acknowledge(run);
-    } else if (isRetryable(error) && !(error instanceof TypeError)) {
+    } else if (retryable && !retriedEnough(batch)) {
       backOff(lane, batch.length, error);
       for (const run of batch) requeue(run);
     } else if (batch.length > 1) {
@@ -179,7 +180,8 @@ export function createUploadQueue(
         requeue(run);
       }
     } else {
-      for (const run of batch) drop(run, error);
+      for (const run of batch)
+        drop(run, retryable ? gaveUpLine(run, error) : rejectedLine(run, error));
     }
     flush();
   }
@@ -255,6 +257,26 @@ export function createUploadQueue(
     full: () => queuedBytes >= MAX_QUEUED_BYTES || runs.size >= MAX_QUEUED_RUNS,
     flush,
   };
+}
+
+function rejectedLine(run: QueuedRun, error: unknown): string {
+  const { reason, status } = rejection(error);
+  return fillTemplate(UPLOAD_QUEUE_DROPPED_LOG, {
+    runId: run.runId,
+    sessionId: run.sessionId,
+    destination: run.lane.destinationId,
+    reason,
+    hint: authHint(status),
+  });
+}
+
+function gaveUpLine(run: QueuedRun, error: unknown): string {
+  return fillTemplate(UPLOAD_QUEUE_GAVE_UP_LOG, {
+    runId: run.runId,
+    sessionId: run.sessionId,
+    destination: run.lane.destinationId,
+    reason: failureReason(error),
+  });
 }
 
 function failureReason(error: unknown): string {
