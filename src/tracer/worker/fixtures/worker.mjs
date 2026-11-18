@@ -15,9 +15,16 @@ function injectWrite(bookmark) {
   fs.unlinkSync(injection);
 }
 
+const credentials = {
+  destinations: [{ apiKey: "lsv2_worker_key", apiUrl: "https://example.test", projectName: "p" }],
+  replicas: [{ apiKey: "lsv2_worker_replica_key", apiUrl: "https://replica.test" }],
+  redact: false,
+};
+
 await runWorker({
   paths,
   version,
+  credentials,
   upgradeState: () =>
     fs.appendFileSync(`${record}.upgrades`, `notes waiting: ${fs.existsSync(paths.notes)}\n`),
   readNewLines: (bookmark, lineId) => {
@@ -48,7 +55,12 @@ await runWorker({
     };
   },
   createQueue: () => ({
-    post: (sessionId, writer, run) => write(`${sessionId} post ${run.id} redact ${writer.redact}`),
+    post: (sessionId, writer, run) => {
+      const keys = [writer.destinations[0]?.apiKey, writer.replicas?.[0]?.apiKey].filter(Boolean);
+      write(
+        `${sessionId} post ${run.id} redact ${writer.redact}${keys.map((key) => ` key ${key}`).join("")}`,
+      );
+    },
     patch: () => undefined,
     pendingFor: () => (fs.existsSync(`${record}.pending`) ? 1 : 0),
     idle: () => true,

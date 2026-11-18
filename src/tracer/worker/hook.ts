@@ -3,6 +3,7 @@ import { describe } from "../../utils/errors.js";
 import { NOTES_FILE_MODE, TRACER_FOLDER_MODE, HOOK_WARNING_PREFIX } from "../constants.js";
 import type { HookNote, PositionedHookNote } from "../types.js";
 import type { HookClientOptions, StopWorkerRequest } from "../types.js";
+import { withoutCredentials } from "./credentials.js";
 import { isNewerVersion, liveLockHolder } from "./lock.js";
 
 function positioned(note: HookNote): PositionedHookNote {
@@ -16,7 +17,8 @@ export function sendHookNote(note: HookNote, options: HookClientOptions): void {
   const { paths, version, startWorker } = options;
   try {
     mkdirSync(paths.folder, { recursive: true, mode: TRACER_FOLDER_MODE });
-    appendFileSync(paths.notes, `${JSON.stringify(positioned(note))}\n`, { mode: NOTES_FILE_MODE });
+    const line = JSON.stringify(positioned({ ...note, writer: withoutCredentials(note.writer) }));
+    appendFileSync(paths.notes, `${line}\n`, { mode: NOTES_FILE_MODE });
     const holder = liveLockHolder(paths.lock);
     if (holder === undefined) startWorker();
     else if (isNewerVersion(version, holder.version)) {

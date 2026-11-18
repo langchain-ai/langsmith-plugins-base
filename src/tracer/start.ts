@@ -11,6 +11,7 @@ export function startTracerWorker(options: StartTracerOptions): Promise<void> {
   let upgrading = Promise.resolve();
   return runWorker({
     paths,
+    credentials: options.credentials,
     version: options.version,
     createBuilder: options.createBuilder,
     createQueue: (log): UploadQueue => createUploadQueue(log),
