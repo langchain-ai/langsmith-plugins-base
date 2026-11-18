@@ -168,18 +168,26 @@ function resumedSessions(paths: TracerPaths): Set<string> {
   );
 }
 
+function claimPid(claim: string): number | undefined {
+  try {
+    return (JSON.parse(claim) as FileLockClaim).pid;
+  } catch {
+    return undefined;
+  }
+}
+
 function lockHolders(folder: string): number[] | undefined {
   try {
     return readdirSync(folder, { recursive: true, withFileTypes: true })
       .filter((entry) => entry.isFile() && entry.parentPath.endsWith(FILE_LOCK_DIRECTORY_SUFFIX))
       .map(({ parentPath, name }) => readFileSync(join(parentPath, name), "utf8"))
-      .map((claim) => (JSON.parse(claim) as FileLockClaim).pid);
+      .flatMap((claim) => claimPid(claim) ?? []);
   } catch {
     return existsSync(folder) ? undefined : [];
   }
 }
 
-async function oldWorkersStopped(folders: string[]): Promise<true> {
+async function oldWorkersStopped(folders: string[], deadline: number): Promise<boolean> {
   const holders = new Set<number>();
   for (;;) {
     const scans = folders.map((folder) => lockHolders(folder));
@@ -187,6 +195,7 @@ async function oldWorkersStopped(folders: string[]): Promise<true> {
     for (const pid of holders)
       if (pid === process.pid || processIsAlive(pid) !== true) holders.delete(pid);
     if (holders.size === 0 && !scans.includes(undefined)) return true;
+    if (Date.now() >= deadline) return false;
     await delay(FILE_LOCK_POLL_INTERVAL_MS);
   }
 }
@@ -209,8 +218,9 @@ export function upgradeLegacyState(
   const integration = options.integration as CodingAgentIntegration;
   const stateClaims = `${legacyState}${FILE_LOCK_DIRECTORY_SUFFIX}`;
   const resumed = resumedSessions(paths);
+  const deadline = Date.now() + LEGACY_QUEUE_WAIT_MS;
   const sending = sendOldQueue(legacyEngine, integration, sessions, resumed, log)
-    .then((sent) => sent && oldWorkersStopped([legacyEngine, stateClaims]))
+    .then((sent) => sent && oldWorkersStopped([legacyEngine, stateClaims], deadline))
     .catch(() => false);
   const timeout = delay(LEGACY_QUEUE_WAIT_MS, false, { ref: false });
   return Promise.race([sending, timeout]).then((sent) => {
