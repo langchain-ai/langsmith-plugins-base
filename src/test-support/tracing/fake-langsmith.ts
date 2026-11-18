@@ -22,6 +22,8 @@ export async function startFakeLangSmith(): Promise<FakeLangSmith> {
         if (fake.failuresLeft > 0) {
           fake.failuresLeft -= 1;
           response.writeHead(503).end("{}");
+        } else if (fake.unavailableMarker !== undefined && body.includes(fake.unavailableMarker)) {
+          response.writeHead(503).end("{}");
         } else if (fake.rejectMarker !== undefined && body.includes(fake.rejectMarker)) {
           response.writeHead(400).end("{}");
         } else {
@@ -48,6 +50,7 @@ export async function startFakeLangSmith(): Promise<FakeLangSmith> {
     mostInFlight: 0,
     failuresLeft: 0,
     rejectMarker: undefined,
+    unavailableMarker: undefined,
     holdResponses: false,
     release: () => {
       fake.holdResponses = false;

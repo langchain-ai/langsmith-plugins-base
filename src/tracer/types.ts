@@ -232,5 +232,6 @@ export interface QueuedRun {
   patch?: RunPatch | undefined;
   sending?: QueuedWork | undefined;
   sendAlone: boolean;
+  failedUploads: number;
   bytes: number;
 }

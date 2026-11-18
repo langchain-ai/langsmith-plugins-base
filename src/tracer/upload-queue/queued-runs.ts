@@ -1,5 +1,6 @@
 import type { UploadBatchItem } from "../../tracing/upload/models.js";
 import type { QueuedRun, UploadLane } from "../types.js";
+import { UPLOAD_QUEUE_RETRIES_BEFORE_SPLIT } from "../constants.js";
 import { mergeRun, patchSubmission, postSubmission } from "./submissions.js";
 
 export function runKey(lane: UploadLane, runId: string): string {
@@ -15,6 +16,7 @@ export function parentKey(run: QueuedRun): string | undefined {
 export function requeue(run: QueuedRun): void {
   const sent = run.sending;
   run.sending = undefined;
+  run.failedUploads += 1;
   if (sent?.post !== undefined) {
     run.post = mergeRun(sent.post, run.patch);
     run.patch = undefined;
@@ -33,4 +35,8 @@ export function startSending(run: QueuedRun): UploadBatchItem {
     submission:
       unsentPost === undefined ? patchSubmission(unsentPatch!) : postSubmission(unsentPost),
   };
+}
+
+export function retriedEnough(batch: QueuedRun[]): boolean {
+  return batch.some((run) => run.failedUploads >= UPLOAD_QUEUE_RETRIES_BEFORE_SPLIT);
 }

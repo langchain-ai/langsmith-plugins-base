@@ -12,6 +12,7 @@ export interface FakeLangSmith {
   mostInFlight: number;
   failuresLeft: number;
   rejectMarker: string | undefined;
+  unavailableMarker: string | undefined;
   holdResponses: boolean;
   release: () => void;
   close: () => Promise<void>;
