@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { publishByRename } from "../../utils/files/publish.js";
-import type { TracerSnapshot, LoadedSnapshot } from "../models.js";
+import type { TracerSnapshot, LoadedSnapshot } from "../types.js";
 import { SNAPSHOT_FILE_MODE, SNAPSHOT_TEMP_SUFFIX, SNAPSHOT_VERSION } from "../constants.js";
 
 export function loadSnapshot(path: string): LoadedSnapshot {

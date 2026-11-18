@@ -1,4 +1,4 @@
-import type { RunSink } from "./models.js";
+import type { RunSink } from "./types.js";
 
 export const PLUGINS_BASE_FOLDER = "langsmith_plugins_base";
 export const LOCK_FILE = "tracer.lock";

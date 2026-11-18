@@ -2,7 +2,7 @@ import { appendFileSync, fstatSync, mkdtempSync, renameSync, writeFileSync } fro
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
-import type { Bookmark, TranscriptLine } from "../models.js";
+import type { Bookmark, TranscriptLine } from "../types.js";
 import { readNewLines } from "./reader.js";
 
 vi.mock("node:fs", { spy: true });

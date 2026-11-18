@@ -6,7 +6,7 @@ import {
   PLUGINS_BASE_FOLDER,
   SNAPSHOT_FILE,
 } from "./constants.js";
-import type { TracerPaths } from "./models.js";
+import type { TracerPaths } from "./types.js";
 
 export function tracerPaths(agentStateFolder: string): TracerPaths {
   const folder = join(agentStateFolder, PLUGINS_BASE_FOLDER);

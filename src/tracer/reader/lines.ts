@@ -1,6 +1,6 @@
 import { readSync } from "node:fs";
 import { NEWLINE, READ_CHUNK_BYTES } from "../constants.js";
-import type { LineVisitor } from "../models.js";
+import type { LineVisitor } from "../types.js";
 
 export function scanLines(file: number, from: number, to: number, visit: LineVisitor): number {
   let carried = Buffer.alloc(0);
