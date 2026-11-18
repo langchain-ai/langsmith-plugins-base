@@ -45,6 +45,7 @@ export const UPLOAD_PATCH_FIELDS: ReadonlySet<NormalizedRunPatchField> = new Set
   "outputs",
   "end_time",
   "error",
+  "status",
   "tags",
   "serialized",
   "events",

@@ -67,6 +67,13 @@ function submission(overrides: Partial<PreparedRunPostSubmission> = {}): Prepare
   };
 }
 
+function statusWriter(): LangSmithUploadWriter {
+  return createLangSmithUploadWriter({
+    redact: false,
+    destinations: [destination(PRIMARY_KEY, "primary-project", "primary-workspace")],
+  });
+}
+
 function patchSubmission(
   overrides: Partial<PreparedRunPatchSubmission> = {},
 ): PreparedRunPatchSubmission {
@@ -422,6 +429,72 @@ describe("bound LangSmith upload writer", () => {
     ]) {
       expect(requests[0]?.payload).not.toHaveProperty(field);
     }
+  });
+
+  describe("explicit run status", () => {
+    // The installed langsmith predates `status`, so these also cover an SDK that drops it.
+    for (const privacyMode of ["full", "metadata"] as const) {
+      it(`sends cancelled and interrupted on a create in ${privacyMode} mode`, async () => {
+        const upload = statusWriter();
+        const destinationId = destinationByIndex(upload.destinations, 0);
+        for (const status of ["cancelled", "interrupted"] as const) {
+          requests.length = 0;
+          const post = submission({ privacyMode });
+          post.run = { ...post.run, status };
+          await upload.send(post, destinationId);
+          expect(requests[0]?.payload).toMatchObject({ status });
+        }
+      });
+
+      it(`sends the status on a patch in ${privacyMode} mode only when selected`, async () => {
+        const upload = statusWriter();
+        const destinationId = destinationByIndex(upload.destinations, 0);
+        await upload.send(
+          patchSubmission({
+            privacyMode,
+            patch: {
+              fields: ["end_time", "status"],
+              values: { end_time: "2026-10-09T20:00:01.000Z", status: "cancelled" },
+            },
+          }),
+          destinationId,
+        );
+        expect(requests[0]?.payload).toMatchObject({ status: "cancelled" });
+        await upload.send(
+          patchSubmission({
+            privacyMode,
+            patch: {
+              fields: ["end_time"],
+              values: { end_time: "2026-10-09T20:00:01.000Z", status: "cancelled" },
+            },
+          }),
+          destinationId,
+        );
+        expect(requests[1]?.payload).not.toHaveProperty("status");
+      });
+    }
+
+    it("leaves a create without a status unchanged", async () => {
+      const upload = statusWriter();
+      await upload.send(submission(), destinationByIndex(upload.destinations, 0));
+      expect(requests[0]?.payload).not.toHaveProperty("status");
+    });
+
+    it("does not send a status the service does not accept as an explicit one", async () => {
+      const upload = statusWriter();
+      const destinationId = destinationByIndex(upload.destinations, 0);
+      const post = submission();
+      post.run = { ...post.run, status: "success" as never };
+      await upload.send(post, destinationId);
+      await upload.send(
+        patchSubmission({
+          patch: { fields: ["status"], values: { status: "error" as never } },
+        }),
+        destinationId,
+      );
+      expect(requests[0]?.payload).not.toHaveProperty("status");
+      expect(requests[1]?.payload).not.toHaveProperty("status");
+    });
   });
 
   it("mutes selected content fields in metadata mode before sending the patch", async () => {
