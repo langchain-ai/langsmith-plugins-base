@@ -9,7 +9,7 @@ import type {
   Log,
   WorkerSession,
 } from "../types.js";
-import { SESSION_END_EVENT } from "../constants.js";
+import { QUIET_SESSION_FORGET_MS, SESSION_END_EVENT } from "../constants.js";
 
 const fileSize = (path: string) => statSync(path, { throwIfNoEntry: false })?.size ?? 0;
 
@@ -141,3 +141,7 @@ export function snapshotOf({ builder, ...saved }: WorkerSession): SessionSnapsho
 
 export const isIdle = (session: WorkerSession) =>
   session.pendingNotes.length === 0 && !session.builder.turnOpen();
+
+export const canForget = (session: WorkerSession) =>
+  (session.ended && session.pendingNotes.length === 0) ||
+  Date.now() - session.lastNoteAt >= QUIET_SESSION_FORGET_MS;

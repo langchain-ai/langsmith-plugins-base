@@ -278,6 +278,46 @@ it("gives a saved session's builder its tracing mode", async () => {
   expect(await recorded(box, 2)).toEqual(["s mode off", "s note Start"]);
 });
 
+it("sets aside a session with no notes for a day and picks it up where it left off", async () => {
+  const box = sandbox();
+  const old = join(box.home, "old.jsonl");
+  writeFileSync(old, transcriptLine("O1"));
+  const saved = (sessionId: string, lastNoteAt?: number, transcriptPath = box.main) => ({
+    ...note(box, "Start"),
+    sessionId,
+    transcriptPath,
+    bookmarks: {
+      [transcriptPath]: { path: transcriptPath, offset: statSync(transcriptPath).size },
+    },
+    pendingNotes: [],
+    ended: false,
+    lastNoteAt,
+  });
+  const dayAgo = Date.now() - 25 * 60 * 60 * 1000;
+  const sessions = {
+    stale: saved("stale", dayAgo, old),
+    s: saved("s", dayAgo),
+    legacy: saved("legacy"),
+  };
+  hook(box, note(box, "Start"), false);
+  writeFileSync(box.paths.snapshot, JSON.stringify({ version: 1, sessions }));
+  startWorker(box);
+  const savedSessions = () =>
+    Object.keys(JSON.parse(readFileSync(box.paths.snapshot, "utf8")).sessions);
+  await waitFor(() => !savedSessions().includes("stale"), "the snapshot to save");
+  expect(savedSessions().toSorted()).toEqual(["legacy", "s"]);
+
+  appendFileSync(old, transcriptLine("N1"));
+  hook(box, { ...note(box, "Next"), sessionId: "stale", transcriptPath: old });
+  await waitFor(() => lines(box.record).includes("stale line N1"), "the new line");
+  expect(lines(box.record).filter((entry) => entry.startsWith("stale"))).toEqual([
+    "stale line N1",
+    "stale note Next",
+  ]);
+  const parked = () => JSON.parse(readFileSync(box.paths.snapshot, "utf8")).parked;
+  await waitFor(() => !("stale" in parked()), "the resumed session to leave the parked list");
+});
+
 it("resumes from the saved notes offset after a restart without retaking old notes", async () => {
   const box = sandbox();
   hook(box, note(box, "Start"));

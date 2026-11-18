@@ -89,6 +89,7 @@ export interface SessionSnapshot {
   builderState: unknown;
   tracingMode?: TracingMode | undefined;
   ended: boolean;
+  lastNoteAt?: number;
 }
 
 export interface NotesBookmark {
@@ -100,6 +101,7 @@ export interface TracerSnapshot {
   version: number;
   sessions: Record<string, SessionSnapshot>;
   notes?: NotesBookmark;
+  parked?: Record<string, Record<string, Bookmark>>;
 }
 
 export interface UploadQueue {
@@ -240,6 +242,7 @@ export interface QueuedRun {
 
 export type WorkerSession = Omit<SessionSnapshot, "builderState"> & {
   builder: TranscriptBuilder;
+  lastNoteAt: number;
 };
 
 export interface LockHolder {
