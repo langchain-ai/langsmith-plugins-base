@@ -1,10 +1,12 @@
-import { linkSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { linkSync, readFileSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { uptime } from "node:os";
 import { setTimeout as delay } from "node:timers/promises";
 import { processIsAlive } from "../../storage/file-lock-support.js";
 import { FILE_EXISTS_CODE, FILE_MISSING_CODE } from "../../utils/constants.js";
 import { errorCode } from "../../utils/errors.js";
 import { removeFile } from "../../utils/files/remove.js";
 import {
+  BOOT_TIME_SLACK_MS,
   HANDOFF_WAIT_MS,
   LOCK_ATTEMPTS,
   LOCK_TAKEOVER_STALE_MS,
@@ -48,9 +50,20 @@ function parseHolder(owner: string): LockHolder | undefined {
   }
 }
 
-function ownerIsAlive(owner: string): boolean {
+function refreshedBeforeBoot(lock: string): boolean {
+  const refreshedAt = statSync(lock, { throwIfNoEntry: false })?.mtimeMs;
+  const bootedAt = Date.now() - uptime() * 1000;
+  return refreshedAt !== undefined && refreshedAt < bootedAt - BOOT_TIME_SLACK_MS;
+}
+
+function ownerIsAlive(lock: string, owner: string): boolean {
   const holder = parseHolder(owner);
-  return holder !== undefined && processIsAlive(holder.pid) !== false;
+  return holder !== undefined && !refreshedBeforeBoot(lock) && processIsAlive(holder.pid) !== false;
+}
+
+export function refreshLock(lock: string): void {
+  const now = new Date();
+  utimesSync(lock, now, now);
 }
 
 function claimTakeover(takeover: string, version: string): boolean {
@@ -77,7 +90,7 @@ export function takeLock(lock: string, version: string): boolean {
     if (createLock(lock, version)) return true;
     const owner = lockOwner(lock);
     if (owner === undefined) continue;
-    if (ownerIsAlive(owner)) return false;
+    if (ownerIsAlive(lock, owner)) return false;
     return takeOverDeadLock(lock, owner, version);
   }
   return false;
@@ -85,7 +98,7 @@ export function takeLock(lock: string, version: string): boolean {
 
 export function liveLockHolder(lock: string): LockHolder | undefined {
   const owner = lockOwner(lock);
-  return owner !== undefined && ownerIsAlive(owner) ? parseHolder(owner) : undefined;
+  return owner !== undefined && ownerIsAlive(lock, owner) ? parseHolder(owner) : undefined;
 }
 
 export const isNewerVersion = (candidate: string, current: string) =>

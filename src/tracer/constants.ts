@@ -47,6 +47,7 @@ export const LOCK_TEMPORARY_SUFFIX = ".claim.";
 export const LOCK_TAKEOVER_SUFFIX = ".takeover";
 export const LOCK_ATTEMPTS = 3;
 export const LOCK_TAKEOVER_STALE_MS = 1_000;
+export const BOOT_TIME_SLACK_MS = 5_000;
 
 export const UNREAD_NOTES = { base: 0, offset: 0 };
 export const HOOK_WARNING_PREFIX = "langsmith tracer: ";
