@@ -72,7 +72,10 @@ await runWorker({
       fs.existsSync(paths.snapshot)
         ? JSON.parse(fs.readFileSync(paths.snapshot, "utf8"))
         : undefined,
-    save: (snapshot) => fs.writeFileSync(paths.snapshot, JSON.stringify(snapshot)),
+    save: (snapshot) => {
+      fs.writeFileSync(`${paths.snapshot}.tmp`, JSON.stringify(snapshot));
+      fs.renameSync(`${paths.snapshot}.tmp`, paths.snapshot);
+    },
   },
 });
 process.exit(0);
