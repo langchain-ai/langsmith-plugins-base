@@ -159,8 +159,9 @@ export function createUploadQueue(
   }
 
   async function send(lane: UploadLane, batch: QueuedRun[]): Promise<void> {
+    const items = batch.map(startSending);
     const error = await Promise.resolve()
-      .then(() => lane.writer.sendBatch(batch.map(startSending), lane.destinationId))
+      .then(() => lane.writer.sendBatch(items, lane.destinationId))
       .then(
         () => undefined,
         (failure: unknown) => failure ?? new Error(),

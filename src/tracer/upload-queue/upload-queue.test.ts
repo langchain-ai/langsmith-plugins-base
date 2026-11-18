@@ -126,6 +126,19 @@ it("merges a patch into a post that has not been sent yet", async () => {
   expect(server.batches[0]!.posts[0]).toMatchObject({ outputs: { answer: SECRET } });
 });
 
+it("sends a patch that lands right after a flush once, without dropping it", async () => {
+  const root = run();
+  queue.post("s1", writer(), root);
+  await uploaded();
+  queue.patch("s1", writer(), finish(root));
+  queue.flush();
+  queue.patch("s1", writer(), { ...finish(root), outputs: { answer: "later" } });
+  queue.flush();
+  await uploaded();
+  expect(logs).toEqual([]);
+  expect(server.stored.get(root.id)).toMatchObject({ outputs: { answer: "later" } });
+});
+
 it("does not wait for a parent posted before a restart", async () => {
   const parent = run();
   const child = run(parent);
