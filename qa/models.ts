@@ -59,10 +59,12 @@ export interface TracedRun {
   end_time: string | null;
   inputs: unknown;
   outputs: unknown;
+  extra?: { metadata?: Record<string, unknown> } | undefined;
 }
 
 export interface RootOutputs {
   messages?: unknown;
+  text?: unknown;
 }
 
 export interface Workspace {
@@ -135,24 +137,62 @@ export interface TextBlock {
   text: string;
 }
 
-export type ReplayPlanner = (lines: TranscriptLine[]) => ReplayPlan;
+export type SubagentTranscripts = ReadonlyMap<string, string[]>;
+export type ReplayPlanner = (
+  lines: TranscriptLine[],
+  subagentTranscripts: SubagentTranscripts,
+) => ReplayPlan;
 export type TracingEnvironment = (settings: TracingSettings) => Record<string, string>;
 
 export interface ReplayEvent {
   payload: Record<string, unknown>;
   transcriptLines: number;
+  agentId?: string;
+}
+
+export interface SubagentLaunch {
+  agentId: string;
+  toolUseId: string;
+  agentType: string;
+  lines: string[];
+}
+
+export interface TimedReplayEvent {
+  event: ReplayEvent;
+  at: number;
+}
+
+export interface PlacedSubagent {
+  events: TimedReplayEvent[];
+  postToolUseIndex: number;
+  background: boolean;
 }
 
 export interface ReplayPlan {
   sessionId: string;
   events: ReplayEvent[];
   turns: ScenarioTurn[];
+  subagents: SubagentLaunch[];
 }
 
 export interface ReplayOptions {
   agent: AgentName;
   pluginDir: string;
   profileDir: string | undefined;
+  toolGapMs: number;
+  turnGapMs: number;
+  freshSessionId: boolean;
+  sessionTimeoutMs: number;
+}
+
+export interface SessionResult {
+  failures: string[];
+  timedOut: boolean;
+}
+
+export interface ReplayTranscript {
+  path: string;
+  lines: string[];
 }
 
 export interface EngineUsage {
@@ -160,3 +200,5 @@ export interface EngineUsage {
   peakMemoryBytes: number;
   exitedOnItsOwn: boolean;
 }
+
+export type UsageSample = Pick<EngineUsage, "cpuMs" | "peakMemoryBytes">;

@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { claudePlan } from "./claude-plan.ts";
+import { TOOL_START_EVENT } from "../constants.ts";
 import { codexPlan } from "./codex-plan.ts";
 
 const claudeTranscript = [
@@ -51,6 +52,28 @@ const codexRollout = [
     payload: { type: "task_complete", turn_id: "turn-1", last_agent_message: "One file." },
   },
 ];
+
+function at(seconds: number): string {
+  return `2026-01-01T00:00:${String(seconds).padStart(2, "0")}.000Z`;
+}
+
+function said(seconds: number, content: string) {
+  return { type: "user", timestamp: at(seconds), message: { content } };
+}
+
+function toolCalls(seconds: number, ...uses: Record<string, unknown>[]) {
+  const content = uses.map((use) => ({ type: "tool_use", input: {}, ...use }));
+  return { type: "assistant", timestamp: at(seconds), message: { content } };
+}
+
+function toolResults(seconds: number, ids: string[], toolUseResult?: Record<string, unknown>) {
+  const content = ids.map((id) => ({ type: "tool_result", tool_use_id: id }));
+  return { type: "user", timestamp: at(seconds), toolUseResult, message: { content } };
+}
+
+function jsonLines(transcript: unknown[]): string[] {
+  return transcript.map((line) => JSON.stringify(line));
+}
 
 function codexUserMessage(...texts: string[]) {
   const content = texts.map((text) => ({ type: "input_text", text }));
@@ -146,6 +169,22 @@ describe("claudePlan", () => {
     ).toEqual([[3, "Part two."]]);
   });
 
+  it("expects a turn for a message from another session but not for other meta lines", () => {
+    const peer = [
+      { type: "user", isMeta: true, message: { content: "skill instructions" } },
+      {
+        type: "user",
+        isMeta: true,
+        origin: { kind: "peer" },
+        message: { content: "message from a peer" },
+      },
+      claudeTranscript[3]!,
+    ];
+    expect(claudePlan(peer).turns.map((turn) => [turn.prompt, turn.reply])).toEqual([
+      ["message from a peer", "One file."],
+    ]);
+  });
+
   it("leaves skill calls out of the expected tool count", () => {
     const skill = [
       claudeTranscript[0]!,
@@ -197,9 +236,339 @@ describe("claudePlan", () => {
       ["SessionEnd", "auto"],
     ]);
   });
+
+  it("expects no turn for a local command whose output is logged as a system line", () => {
+    const plan = claudePlan([
+      {
+        type: "user",
+        sessionId: "s1",
+        message: { content: "<command-name>/usage</command-name>" },
+      },
+      { type: "system", subtype: "local_command", content: "<local-command-stdout>" },
+      { type: "user", message: { content: "thanks" } },
+      { type: "assistant", message: { id: "m1", stop_reason: "end_turn", content: [] } },
+    ]);
+    expect(plan.turns.map((turn) => turn.prompt)).toEqual(["thanks"]);
+  });
+
+  it("expects no turn for a notice Claude Code only writes to the transcript", () => {
+    const notice = { type: "user", queueTranscriptOnly: true, message: { content: "done" } };
+    const plan = claudePlan([{ ...notice, sessionId: "s1" }, ...claudeTranscript.slice(0, 4)]);
+    expect(plan.turns.map((turn) => turn.prompt)).toEqual(["list files"]);
+  });
+
+  it("expects a slash command and a shell command as they were typed", () => {
+    const done = { type: "assistant", message: { id: "m1", stop_reason: "end_turn", content: [] } };
+    const command =
+      "<command-message>review</command-message>\n<command-name>/review</command-name>\n<command-args>42</command-args>";
+    const plan = claudePlan([
+      { type: "user", sessionId: "s1", message: { content: command } },
+      done,
+      {
+        type: "user",
+        message: { content: "<bash-input> ls </bash-input><bash-stdout>a</bash-stdout>" },
+      },
+      { ...done, message: { ...done.message, id: "m2" } },
+    ]);
+    expect(plan.turns.map((turn) => turn.prompt)).toEqual(["/review 42", "ls"]);
+  });
+
+  it("expects a turn for a prompt Claude Code submits itself", () => {
+    const scheduled = {
+      type: "user",
+      isMeta: true,
+      turnPosition: {},
+      message: { content: "tick" },
+    };
+    const plan = claudePlan([{ ...scheduled, sessionId: "s1" }, claudeTranscript[3]!]);
+    expect(plan.turns.map((turn) => [turn.prompt, turn.reply])).toEqual([["tick", "One file."]]);
+  });
+
+  it("keeps a turn going when Claude Code continues it after its reply", () => {
+    const continued = [
+      ...claudeTranscript.slice(0, 4),
+      { type: "user", isMeta: true, turnCompanion: true, message: { content: "check it" } },
+      ...claudeTranscript.slice(1, 3),
+      { type: "assistant", message: { id: "m5", stop_reason: "end_turn", content: [] } },
+    ];
+    const plan = claudePlan(continued);
+    const stops = plan.events.filter((event) => event.payload.hook_event_name === "Stop");
+    expect([plan.turns.length, plan.turns[0]?.minTools, stops.length]).toEqual([1, 2, 1]);
+  });
+
+  it("keeps a turn going after a blocked Stop and fires a second Stop at its final reply", () => {
+    const retried = [{ type: "text", text: "Retried." }];
+    const blocked = [
+      ...claudeTranscript.slice(0, 4),
+      { type: "user", isMeta: true, message: { content: "Stop hook feedback: retry" } },
+      { type: "attachment", attachment: { type: "hook_blocking_error", hookEvent: "Stop" } },
+      { type: "assistant", message: { id: "m5", stop_reason: "end_turn", content: retried } },
+      { type: "user", isMeta: true, turnCompanion: true, message: { content: "reminder" } },
+      { type: "user", message: { content: "next" } },
+    ];
+    const plan = claudePlan(blocked);
+    const stops = plan.events.filter((event) => event.payload.hook_event_name === "Stop");
+    const active = stops.map((stop) => stop.payload.stop_hook_active);
+    expect([plan.turns.length, plan.turns[0]?.reply, active]).toEqual([
+      2,
+      "Retried.",
+      [false, true],
+    ]);
+  });
+
+  it("counts a peer message that arrives mid-turn as part of the running turn", () => {
+    const peer = {
+      type: "user",
+      isMeta: true,
+      origin: { kind: "peer" },
+      message: { content: "hi" },
+    };
+    const plan = claudePlan([
+      ...claudeTranscript.slice(0, 3),
+      peer,
+      ...claudeTranscript.slice(1, 4),
+    ]);
+    expect(plan.turns.map((turn) => [turn.prompt, turn.minTools])).toEqual([["list files", 2]]);
+  });
+
+  it("expects one turn for task notifications queued before the model answers", () => {
+    const plan = claudePlan([
+      ...claudeTranscript.slice(0, 4),
+      said(5, "<task-notification>\n<task-id>b1</task-id>"),
+      said(6, "<task-notification>\n<task-id>b2</task-id>"),
+    ]);
+    expect(plan.turns.length).toBe(2);
+  });
+
+  it("expects a task notification's summary as its prompt", () => {
+    const notice =
+      "<task-notification>\n<task-id>b1</task-id>\n<summary> Build finished </summary>";
+    const plan = claudePlan([{ type: "user", sessionId: "s1", message: { content: notice } }]);
+    expect(plan.turns.map((turn) => turn.prompt)).toEqual(["Build finished"]);
+  });
+
+  it("replays a subagent's hooks before its Agent call finishes", () => {
+    const launched = [
+      { type: "user", sessionId: "s1", message: { content: "explore" } },
+      {
+        type: "assistant",
+        message: {
+          id: "m1",
+          content: [
+            { type: "tool_use", id: "a1", name: "Agent", input: { subagent_type: "Explore" } },
+          ],
+        },
+      },
+      {
+        type: "user",
+        toolUseResult: { agentId: "x1" },
+        message: { content: [{ type: "tool_result", tool_use_id: "a1", content: "done" }] },
+      },
+      {
+        type: "assistant",
+        message: { id: "m2", stop_reason: "end_turn", content: [{ type: "text", text: "Done." }] },
+      },
+    ];
+    const subagent = [
+      {
+        type: "assistant",
+        message: { content: [{ type: "tool_use", id: "t9", name: "Bash", input: {} }] },
+      },
+      { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t9" }] } },
+      { type: "assistant", message: { content: [{ type: "text", text: "found" }] } },
+    ];
+    const subagentLines = subagent.map((line) => JSON.stringify(line));
+    const plan = claudePlan(launched, new Map([["x1", subagentLines]]));
+    expect(plan.subagents).toEqual([
+      { agentId: "x1", toolUseId: "a1", agentType: "Explore", lines: subagentLines },
+    ]);
+    expect(
+      plan.events.map((event) => [
+        event.payload.hook_event_name,
+        event.agentId,
+        event.payload.agent_type,
+        event.transcriptLines,
+      ]),
+    ).toEqual([
+      ["SessionStart", undefined, undefined, 0],
+      ["UserPromptSubmit", undefined, undefined, 0],
+      ["PreToolUse", undefined, undefined, 2],
+      ["PreToolUse", "x1", "Explore", 1],
+      ["PostToolUse", "x1", "Explore", 2],
+      ["SubagentStop", "x1", "Explore", 3],
+      ["PostToolUse", undefined, undefined, 3],
+      ["Stop", undefined, undefined, 4],
+      ["SessionEnd", undefined, undefined, 4],
+    ]);
+    expect(plan.events[5]?.payload.last_assistant_message).toBe("found");
+    expect(plan.turns[0]?.minTools).toBe(2);
+  });
+
+  it("replays a background subagent alongside the main thread by time", () => {
+    const launched = [
+      { ...said(0, "explore"), sessionId: "s1" },
+      toolCalls(1, { id: "b1", name: "Task" }),
+      toolResults(2, ["b1"], { agentId: "x2", status: "async_launched" }),
+      toolCalls(5, { id: "t5", name: "Bash" }),
+      toolResults(6, ["t5"]),
+      { type: "assistant", timestamp: at(9), message: { stop_reason: "end_turn", content: [] } },
+    ];
+    const subagent = jsonLines([
+      { ...toolCalls(0, { id: "s1", name: "Read" }), timestamp: "2026-01-01T00:00:01.500Z" },
+      toolResults(3, ["s1"]),
+      { type: "assistant", timestamp: at(7), message: { content: [{ type: "text", text: "bg" }] } },
+    ]);
+    const plan = claudePlan(launched, new Map([["x2", subagent]]));
+    expect(
+      plan.events.map((event) => [event.payload.hook_event_name, event.payload.tool_use_id]),
+    ).toEqual([
+      ["SessionStart", undefined],
+      ["UserPromptSubmit", undefined],
+      ["PreToolUse", "b1"],
+      ["PostToolUse", "b1"],
+      ["PreToolUse", "s1"],
+      ["PostToolUse", "s1"],
+      ["PreToolUse", "t5"],
+      ["PostToolUse", "t5"],
+      ["SubagentStop", undefined],
+      ["Stop", undefined],
+      ["SessionEnd", undefined],
+    ]);
+  });
+
+  it("leaves out the parent's Agent call that a forked subagent copies into its transcript", () => {
+    const launched = [
+      { ...said(0, "explore"), sessionId: "s1" },
+      toolCalls(1, { id: "f1", name: "Agent" }),
+      toolResults(2, ["f1"], { agentId: "x4", status: "async_launched" }),
+      { type: "assistant", timestamp: at(9), message: { stop_reason: "end_turn", content: [] } },
+    ];
+    const fork = jsonLines([
+      { type: "fork-context-ref", agentId: "x4" },
+      toolCalls(1, { id: "f1", name: "Agent" }),
+      toolResults(2, ["f1"]),
+      toolCalls(3, { id: "s1", name: "Bash" }),
+      toolResults(4, ["s1"]),
+    ]);
+    const plan = claudePlan(launched, new Map([["x4", fork]]));
+    expect(
+      plan.events
+        .filter((event) => event.agentId === "x4")
+        .map((event) => [event.payload.hook_event_name, event.payload.tool_use_id]),
+    ).toEqual([
+      ["PreToolUse", "s1"],
+      ["PostToolUse", "s1"],
+      ["SubagentStop", undefined],
+    ]);
+    expect(plan.turns[0]?.minTools).toBe(2);
+  });
+
+  it("plans a turn for model work that has no prompt of its own and stops it", () => {
+    const plan = claudePlan([
+      { ...said(0, "summary"), sessionId: "s1", isCompactSummary: true },
+      toolCalls(1, { id: "t1", name: "Bash" }),
+      toolResults(2, ["t1"]),
+      {
+        type: "assistant",
+        timestamp: at(3),
+        message: { id: "m1", stop_reason: "end_turn", content: [] },
+      },
+      said(4, "next"),
+      {
+        type: "assistant",
+        timestamp: at(5),
+        message: { id: "m2", stop_reason: "end_turn", content: [] },
+      },
+    ]);
+    expect(plan.turns.map(({ prompt, minTools }) => [prompt, minTools])).toEqual([
+      ["", 1],
+      ["next", 0],
+    ]);
+    expect(plan.events.map((event) => event.payload.hook_event_name)).toEqual([
+      "SessionStart",
+      "PostCompact",
+      "PreToolUse",
+      "PostToolUse",
+      "Stop",
+      "UserPromptSubmit",
+      "Stop",
+      "SessionEnd",
+    ]);
+  });
+
+  it("replays a subagent started by another subagent inside its parent's Agent call", () => {
+    const dig = { name: "Agent", input: { prompt: "dig deeper" } };
+    const launched = [
+      { ...said(0, "explore"), sessionId: "s1" },
+      toolCalls(1, { id: "a1", name: "Agent" }),
+      toolResults(9, ["a1"], { agentId: "x1" }),
+      toolCalls(10, { id: "a2", name: "Agent" }),
+      toolResults(12, ["a2"], { agentId: "x0" }),
+      { type: "assistant", timestamp: at(13), message: { stop_reason: "end_turn", content: [] } },
+    ];
+    const parent = [
+      said(1, "explore"),
+      toolCalls(2, { id: "n1", ...dig }, { id: "n2", ...dig }),
+      toolResults(8, ["n1", "n2"]),
+    ];
+    const child = [
+      said(3, "dig deeper"),
+      toolCalls(4, { id: "c1", name: "Read" }),
+      toolResults(5, ["c1"]),
+    ];
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const plan = claudePlan(
+      launched,
+      new Map([
+        ["x8", ["{"]],
+        ["x9", jsonLines([said(0, "something else")])],
+        ["x0", jsonLines([said(11, "dig deeper")])],
+        ["x1", jsonLines(parent)],
+        ["x2", jsonLines(child)],
+        ["x3", jsonLines(child.slice(0, 1))],
+      ]),
+    );
+    expect(plan.subagents.map(({ agentId, toolUseId }) => [agentId, toolUseId])).toEqual([
+      ["x1", "a1"],
+      ["x2", "n1"],
+      ["x3", "n2"],
+      ["x0", "a2"],
+    ]);
+    expect(
+      plan.events.map((event) => [event.payload.hook_event_name, event.payload.tool_use_id]),
+    ).toEqual([
+      ["SessionStart", undefined],
+      ["UserPromptSubmit", undefined],
+      ["PreToolUse", "a1"],
+      ["PreToolUse", "n1"],
+      ["PreToolUse", "n2"],
+      ["SubagentStop", undefined],
+      ["PreToolUse", "c1"],
+      ["PostToolUse", "c1"],
+      ["SubagentStop", undefined],
+      ["PostToolUse", "n1"],
+      ["PostToolUse", "n2"],
+      ["SubagentStop", undefined],
+      ["PostToolUse", "a1"],
+      ["PreToolUse", "a2"],
+      ["SubagentStop", undefined],
+      ["PostToolUse", "a2"],
+      ["Stop", undefined],
+      ["SessionEnd", undefined],
+    ]);
+    expect(plan.turns[0]?.minTools).toBe(5);
+    expect(warn.mock.calls).toEqual([["skipping subagent x8, its transcript can't be read"]]);
+    warn.mockRestore();
+  });
 });
 
 describe("codexPlan", () => {
+  it("emits the event that tool pacing waits on", () => {
+    expect(codexPlan(codexRollout).events.map((event) => event.payload.hook_event_name)).toContain(
+      TOOL_START_EVENT.codex,
+    );
+  });
+
   it("expects one turn per prompt with its tools and reply", () => {
     expect(codexPlan(codexRollout).turns).toEqual([
       {
