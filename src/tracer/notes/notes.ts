@@ -1,19 +1,11 @@
-import {
-  closeSync,
-  fstatSync,
-  openSync,
-  readdirSync,
-  readSync,
-  renameSync,
-  statSync,
-} from "node:fs";
+import { closeSync, fstatSync, openSync, readdirSync, renameSync, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { FILE_MISSING_CODE } from "../../utils/constants.js";
 import { errorCode } from "../../utils/errors.js";
 import type { NotesBookmark, NotesRead, RotatedLeftover, RotatedNotes } from "../types.js";
 import { removeFile } from "../../utils/files/remove.js";
+import { scanLines } from "../reader/lines.js";
 import {
-  NEWLINE,
   NOTES_ROTATE_BYTES,
   ROTATED_NOTES_NAME,
   ROTATED_NOTES_SETTLE_MS,
@@ -41,12 +33,11 @@ export class NotesFollower {
     }
     try {
       const size = fstatSync(file).size;
-      const buffer = Buffer.alloc(Math.max(0, size - offset));
-      readSync(file, buffer, 0, buffer.length, offset);
-      const complete = buffer.lastIndexOf(NEWLINE) + 1;
-      const text = buffer.subarray(0, complete).toString("utf8");
-      for (const line of text.split("\n").filter(Boolean)) this.receive(line);
-      return { offset: offset + complete, size };
+      const end = scanLines(file, offset, size, (line) => {
+        if (line.length > 0) this.receive(line.toString("utf8"));
+        return false;
+      });
+      return { offset: end, size };
     } finally {
       closeSync(file);
     }

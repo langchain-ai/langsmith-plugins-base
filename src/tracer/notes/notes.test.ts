@@ -4,14 +4,17 @@ import {
   mkdtempSync,
   openSync,
   readdirSync,
+  readSync,
   writeFileSync,
   writeSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
-import { NOTES_ROTATE_BYTES, ROTATED_NOTES_SETTLE_MS } from "../constants.js";
+import { NOTES_ROTATE_BYTES, READ_CHUNK_BYTES, ROTATED_NOTES_SETTLE_MS } from "../constants.js";
 import { NotesFollower } from "./notes.js";
+
+vi.mock("node:fs", { spy: true });
 
 const PADDING = "x".repeat(1023);
 
@@ -42,6 +45,16 @@ it("holds a half-written note until its line is complete", () => {
   follower.take();
   expect(received).toEqual(["one", "two"]);
   expect(follower.unread()).toBe(false);
+});
+
+it("reads a large backlog of notes a chunk at a time", () => {
+  const notes = notesPastRotation("first\n");
+  const { follower, received } = follow(notes);
+  vi.mocked(readSync).mockClear();
+  follower.take();
+  expect(received).toEqual(["first"]);
+  const reads = vi.mocked(readSync).mock.calls.map(([, buffer]) => buffer.byteLength);
+  expect(Math.max(...reads)).toBe(READ_CHUNK_BYTES);
 });
 
 it("reads a note a slow hook writes into the rotated file once the rotation settles", () => {
