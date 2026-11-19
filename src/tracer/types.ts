@@ -1,5 +1,8 @@
 import type { CodingAgentMetadataOptions } from "../metadata/index.js";
-import type { LangSmithUploadWriterOptions } from "../tracing/upload/models.js";
+import type {
+  LangSmithUploadWriterOptions,
+  LangSmithUploadWriter,
+} from "../tracing/upload/models.js";
 
 export type TranscriptLine = Record<string, unknown>;
 
@@ -183,3 +186,52 @@ export type LegacyImport = Pick<
 export type LegacyRecovery = Required<Pick<LegacySession, "sessionId" | "writer" | "recover">> &
   Pick<LegacySession, "openTurn">;
 export type LegacyDropped = Record<"missing" | "writerless" | "otherAccount" | "uploads", number>;
+
+export interface RotatedNotes {
+  path: string;
+  offset: number;
+  rotatedAt: number;
+}
+
+export interface RotatedLeftover {
+  path: string;
+  base: number;
+  nextBase: number;
+}
+
+export interface NotesRead {
+  offset: number;
+  size: number;
+}
+
+export interface UploadQueuePolicy {
+  retryBaseMs: number;
+  retryMaxMs: number;
+}
+
+export interface UploadLane {
+  key: string;
+  writer: LangSmithUploadWriter;
+  destinationId: string;
+  ready: Set<QueuedRun>;
+  failures: number;
+  retryAt: number;
+}
+
+export interface QueuedWork {
+  post?: RunPost | undefined;
+  patch?: RunPatch | undefined;
+}
+
+export interface QueuedRun {
+  key: string;
+  runId: string;
+  sessionId: string;
+  lane: UploadLane;
+  post?: RunPost | undefined;
+  patch?: RunPatch | undefined;
+  sending?: QueuedWork | undefined;
+  sendAlone: boolean;
+  failedUploads: number;
+  bytes: number;
+}
