@@ -30,6 +30,7 @@ it("uses its configured marker and retries a failed GitHub lookup only after the
     expect.stringContaining(installedGh),
     ["api", "user", "--jq", ".login"],
     {
+      windowsHide: true,
       encoding: "utf-8",
       timeout: 5_000,
       stdio: ["ignore", "pipe", "ignore"],

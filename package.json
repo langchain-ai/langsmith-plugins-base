@@ -1,6 +1,6 @@
 {
   "name": "@langchain/plugins-base",
-  "version": "0.6.6",
+  "version": "0.7.0",
   "description": "Shared runtime and build pipeline for LangChain plugins",
   "keywords": [
     "claude-code",
@@ -63,6 +63,10 @@
     "./tracing/upload": {
       "types": "./dist/tracing/upload/index.d.ts",
       "default": "./dist/tracing/upload/index.js"
+    },
+    "./tracer": {
+      "types": "./dist/tracer/index.d.ts",
+      "default": "./dist/tracer/index.js"
     },
     "./tracing/upload-identity": {
       "types": "./dist/tracing/upload/identity.d.ts",

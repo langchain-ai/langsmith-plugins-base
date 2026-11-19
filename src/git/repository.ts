@@ -67,6 +67,7 @@ function gitOutput(args: string[], cwd: string): string {
   const env: NodeJS.ProcessEnv = { ...process.env, LC_ALL: "C", LANG: "C" };
   for (const key of GIT_LOCATION_ENV_KEYS) delete env[key];
   return execFileSync(installedCommand(GIT_COMMAND), args, {
+    windowsHide: true,
     cwd,
     env,
     encoding: "utf-8",
@@ -156,6 +157,7 @@ export function getRepositoryMetadata(cwd: string): RepositoryAttribution {
 
 export function githubLoginLookup(): string {
   return execFileSync(installedCommand(GH_LOGIN_COMMAND), GH_LOGIN_ARGUMENTS, {
+    windowsHide: true,
     encoding: "utf-8",
     timeout: GH_LOGIN_TIMEOUT_MS,
     stdio: ["ignore", "pipe", "ignore"],
