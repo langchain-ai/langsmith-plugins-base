@@ -107,6 +107,15 @@ it("imports the last day's sessions with their mode and writer, cleaning up afte
   expect(fs.readdirSync(stateFolder)).toEqual(["langsmith_plugins_base"]);
 });
 
+it("cleans up after an old worker that crashed while writing its claim", async () => {
+  const stateFolder = oldInstall();
+  const claims = join(stateFolder, "langsmith_engine", "session", "worker.claims");
+  fs.mkdirSync(claims, { recursive: true });
+  fs.writeFileSync(join(claims, "claim.json"), '{"pid": 1');
+  await upgrade(stateFolder, []);
+  expect(fs.readdirSync(stateFolder)).toEqual(["langsmith_plugins_base"]);
+});
+
 it("resumes an old open turn after its last line, its start or the end, with the builder's seed", async () => {
   const stateFolder = oldInstall();
   const sessions = [

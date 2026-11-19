@@ -67,6 +67,7 @@ export interface TranscriptBuilder {
   readLine: (transcriptPath: string, line: TranscriptLine) => void;
   receiveNote: (note: HookNote) => void;
   transcripts: () => string[];
+  turnOpen: () => boolean;
   state: () => unknown;
 }
 
@@ -88,6 +89,7 @@ export interface SessionSnapshot {
   builderState: unknown;
   tracingMode?: TracingMode | undefined;
   ended: boolean;
+  lastNoteAt?: number;
 }
 
 export interface NotesBookmark {
@@ -99,6 +101,7 @@ export interface TracerSnapshot {
   version: number;
   sessions: Record<string, SessionSnapshot>;
   notes?: NotesBookmark;
+  parked?: Record<string, Record<string, Bookmark>>;
 }
 
 export interface UploadQueue {
@@ -121,6 +124,7 @@ export interface TracerPaths {
 export type ReadNewLines = (
   bookmark: Bookmark,
   lineId: (line: TranscriptLine) => string | undefined,
+  log: (line: string) => void,
 ) => ReadLine[];
 
 export interface SnapshotStore {
@@ -132,12 +136,14 @@ export interface StartTracerOptions {
   agentStateFolder: string;
   integration: string;
   version: string;
+  credentials: LangSmithUploadWriterOptions;
   createBuilder: CreateTranscriptBuilder;
   readLegacySessions: (stateFile: string) => LegacySession[];
 }
 
 export interface WorkerOptions {
   paths: TracerPaths;
+  credentials: LangSmithUploadWriterOptions;
   createBuilder: CreateTranscriptBuilder;
   createQueue: (log: (line: string) => void) => UploadQueue;
   readNewLines: ReadNewLines;
@@ -235,3 +241,26 @@ export interface QueuedRun {
   failedUploads: number;
   bytes: number;
 }
+
+export type WorkerSession = Omit<SessionSnapshot, "builderState"> & {
+  builder: TranscriptBuilder;
+  lastNoteAt: number;
+};
+
+export interface LockHolder {
+  pid: number;
+  version: string;
+}
+
+export interface StopWorkerRequest {
+  stopWorker: true;
+  version: string;
+}
+
+export interface HookClientOptions {
+  paths: TracerPaths;
+  version: string;
+  startWorker: () => void;
+}
+
+export type Log = (line: string) => void;
