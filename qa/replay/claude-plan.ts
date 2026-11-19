@@ -1,9 +1,12 @@
 import {
+  CLAUDE_COMMAND_PROMPT,
+  CLAUDE_LOCAL_COMMAND_SUBTYPE,
   CLAUDE_LOCAL_OUTPUT_PREFIX,
   CLAUDE_NON_PROMPT_PREFIX,
   CLAUDE_PEER_ORIGIN,
   CLAUDE_SHELL_PROMPT,
   CLAUDE_SYSTEM_REMINDER,
+  CLAUDE_TASK_SUMMARY,
   DEFAULT_SUBAGENT_TYPE,
   PRE_TOOL_EVENT,
   REPLAY_PERMISSION_MODE,
@@ -30,9 +33,16 @@ function blocks(line: TranscriptLine, type: string): TranscriptLine[] {
   return Array.isArray(content) ? content.filter((block) => block?.type === type) : [];
 }
 
-function isUserText(line: TranscriptLine | undefined): line is TranscriptLine {
-  if (line?.type !== "user" || line.isCompactSummary || line.isSidechain) return false;
-  if (line.isMeta && line.origin?.kind !== CLAUDE_PEER_ORIGIN) return false;
+function isUserText(line: TranscriptLine | undefined): line is TranscriptLine & { type: "user" } {
+  if (
+    line?.type !== "user" ||
+    line.isCompactSummary ||
+    line.isSidechain ||
+    line.queueTranscriptOnly
+  )
+    return false;
+  if (line.isMeta && line.origin?.kind !== CLAUDE_PEER_ORIGIN && line.turnPosition === undefined)
+    return false;
   return blocks(line, "tool_result").length === 0;
 }
 
@@ -40,13 +50,24 @@ function isPrompt(lines: TranscriptLine[], index: number): boolean {
   const line = lines[index];
   if (!isUserText(line) || CLAUDE_NON_PROMPT_PREFIX.test(textOf(line.message?.content)))
     return false;
-  const reply = lines.slice(index + 1).find(isUserText);
-  return !CLAUDE_LOCAL_OUTPUT_PREFIX.test(textOf(reply?.message?.content));
+  const reply = lines
+    .slice(index + 1)
+    .find((later) => later.subtype === CLAUDE_LOCAL_COMMAND_SUBTYPE || isUserText(later));
+  return (
+    reply?.subtype !== CLAUDE_LOCAL_COMMAND_SUBTYPE &&
+    !CLAUDE_LOCAL_OUTPUT_PREFIX.test(textOf(reply?.message?.content))
+  );
 }
 
 function promptText(line: TranscriptLine): string {
   const text = textOf(line.message?.content).replace(CLAUDE_SYSTEM_REMINDER, "").trim();
-  return CLAUDE_SHELL_PROMPT.exec(text)?.[1] ?? text;
+  const command = CLAUDE_COMMAND_PROMPT.exec(text);
+  if (command !== null) return `${command[1]?.trim()} ${command[2]?.trim() ?? ""}`.trim();
+  return (
+    CLAUDE_SHELL_PROMPT.exec(text)?.[1]?.trim() ??
+    CLAUDE_TASK_SUMMARY.exec(text)?.[1]?.trim() ??
+    text
+  );
 }
 
 function endsTurn(lines: TranscriptLine[], index: number): boolean {
@@ -55,8 +76,8 @@ function endsTurn(lines: TranscriptLine[], index: number): boolean {
     return false;
   const next = lines
     .slice(index + 1)
-    .find((later) => later.type === "assistant" || isUserText(later));
-  return next === undefined || next.message?.id !== line.message?.id;
+    .find((later) => later.type === "assistant" || isUserText(later) || later.turnCompanion);
+  return next === undefined || (!next.turnCompanion && next.message?.id !== line.message?.id);
 }
 
 function preToolUse(use: TranscriptLine): Record<string, unknown> {
@@ -255,8 +276,7 @@ export function claudePlan(
         compact_summary: textOf(line.message?.content),
       });
     }
-    if (isPrompt(lines, index)) {
-      if (current !== undefined) current.stops = false;
+    if (isPrompt(lines, index) && !(line.isMeta && current !== undefined)) {
       current = {
         prompt: promptText(line),
         command: "",

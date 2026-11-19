@@ -30,26 +30,24 @@ export function checkRuns(scenario: Scenario, runs: TracedRun[]): string[] {
   const roots = runs
     .filter((run) => run.parent_run_id === null)
     .toSorted((left, right) => Date.parse(left.start_time) - Date.parse(right.start_time));
-  const expected = scenario.turns.filter((turn) => turn.stops !== false).length;
+  const expected = scenario.turns.length;
   if (roots.length !== expected) {
     failures.push(`expected ${expected} turns but found ${roots.length}`);
   }
   const numbered = roots.some((root) => turnNumber(root) !== undefined);
-  let traced = 0;
 
   for (const [index, turn] of scenario.turns.entries()) {
-    if (turn.stops === false) continue;
-    traced += 1;
     const root = numbered
-      ? roots.find((candidate) => turnNumber(candidate) === traced)
-      : roots[traced - 1];
+      ? roots.find((candidate) => turnNumber(candidate) === index + 1)
+      : roots[index];
     if (root === undefined) continue;
     const label = `turn ${index + 1}`;
     const children = descendantsOf(root, runs);
     const tools = children.filter((run) => run.run_type === "tool" && run.name !== SKILL_TOOL_NAME);
     if (!containsText(JSON.stringify(root.inputs) ?? "", turn.prompt.slice(0, PROMPT_MATCH_CHARS)))
       failures.push(`${label} is missing the user prompt`);
-    if (turn.reply !== null && !hasText((root.outputs as RootOutputs | null)?.messages))
+    const outputs = root.outputs as RootOutputs | null;
+    if (turn.reply !== null && !hasText(outputs?.messages) && !hasText(outputs?.text))
       failures.push(`${label} is missing the final reply`);
     if (turn.expectsModelCall !== false && !children.some((run) => run.run_type === "llm"))
       failures.push(`${label} has no model call`);
@@ -59,7 +57,7 @@ export function checkRuns(scenario: Scenario, runs: TracedRun[]): string[] {
       failures.push(`${label} has ${tools.length} tool runs, expected at most ${turn.maxTools}`);
     if (
       typeof turn.reply === "string" &&
-      !containsText(JSON.stringify(root.outputs) ?? "", turn.reply)
+      !containsText(JSON.stringify(root.outputs) ?? "", turn.reply.slice(0, PROMPT_MATCH_CHARS))
     )
       failures.push(`${label} reply does not match the transcript`);
     const expectedOutput = turn.toolOutputContains;

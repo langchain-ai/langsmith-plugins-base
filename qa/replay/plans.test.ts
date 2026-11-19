@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { claudePlan } from "./claude-plan.ts";
-import { TOOL_START_EVENT } from "../constants.ts";
+import { TURN_EVENTS } from "../constants.ts";
 import { codexPlan } from "./codex-plan.ts";
+import { cursorPlan } from "./cursor-plan.ts";
 
 const claudeTranscript = [
   { type: "user", sessionId: "s1", message: { role: "user", content: "list files" } },
@@ -51,6 +52,31 @@ const codexRollout = [
     type: "event_msg",
     payload: { type: "task_complete", turn_id: "turn-1", last_agent_message: "One file." },
   },
+];
+
+const cursorTranscript = [
+  {
+    role: "user",
+    message: {
+      content: [
+        {
+          type: "text",
+          text: "<timestamp>Today</timestamp>\n<user_query>\nlist files\n</user_query>",
+        },
+      ],
+    },
+  },
+  {
+    role: "assistant",
+    message: {
+      content: [
+        { type: "text", text: "Looking." },
+        { type: "tool_use", name: "Shell", input: { command: "ls" } },
+      ],
+    },
+  },
+  { role: "assistant", message: { content: [{ type: "text", text: "One file." }] } },
+  { type: "turn_ended", status: "success" },
 ];
 
 function at(seconds: number): string {
@@ -237,13 +263,85 @@ describe("claudePlan", () => {
     ]);
   });
 
-  it("marks a turn that never stopped so the checker expects no trace for it", () => {
+  it("expects no turn for a local command whose output is logged as a system line", () => {
     const plan = claudePlan([
-      { type: "user", sessionId: "s1", message: { content: "first" } },
-      { type: "user", message: { content: "second" } },
+      {
+        type: "user",
+        sessionId: "s1",
+        message: { content: "<command-name>/usage</command-name>" },
+      },
+      { type: "system", subtype: "local_command", content: "<local-command-stdout>" },
+      { type: "user", message: { content: "thanks" } },
       { type: "assistant", message: { id: "m1", stop_reason: "end_turn", content: [] } },
     ]);
-    expect(plan.turns.map((turn) => turn.stops)).toEqual([false, undefined]);
+    expect(plan.turns.map((turn) => turn.prompt)).toEqual(["thanks"]);
+  });
+
+  it("expects no turn for a notice Claude Code only writes to the transcript", () => {
+    const notice = { type: "user", queueTranscriptOnly: true, message: { content: "done" } };
+    const plan = claudePlan([{ ...notice, sessionId: "s1" }, ...claudeTranscript.slice(0, 4)]);
+    expect(plan.turns.map((turn) => turn.prompt)).toEqual(["list files"]);
+  });
+
+  it("expects a slash command and a shell command as they were typed", () => {
+    const done = { type: "assistant", message: { id: "m1", stop_reason: "end_turn", content: [] } };
+    const command =
+      "<command-message>review</command-message>\n<command-name>/review</command-name>\n<command-args>42</command-args>";
+    const plan = claudePlan([
+      { type: "user", sessionId: "s1", message: { content: command } },
+      done,
+      {
+        type: "user",
+        message: { content: "<bash-input> ls </bash-input><bash-stdout>a</bash-stdout>" },
+      },
+      { ...done, message: { ...done.message, id: "m2" } },
+    ]);
+    expect(plan.turns.map((turn) => turn.prompt)).toEqual(["/review 42", "ls"]);
+  });
+
+  it("expects a turn for a prompt Claude Code submits itself", () => {
+    const scheduled = {
+      type: "user",
+      isMeta: true,
+      turnPosition: {},
+      message: { content: "tick" },
+    };
+    const plan = claudePlan([{ ...scheduled, sessionId: "s1" }, claudeTranscript[3]!]);
+    expect(plan.turns.map((turn) => [turn.prompt, turn.reply])).toEqual([["tick", "One file."]]);
+  });
+
+  it("keeps a turn going when Claude Code continues it after its reply", () => {
+    const continued = [
+      ...claudeTranscript.slice(0, 4),
+      { type: "user", isMeta: true, turnCompanion: true, message: { content: "check it" } },
+      ...claudeTranscript.slice(1, 3),
+      { type: "assistant", message: { id: "m5", stop_reason: "end_turn", content: [] } },
+    ];
+    const plan = claudePlan(continued);
+    const stops = plan.events.filter((event) => event.payload.hook_event_name === "Stop");
+    expect([plan.turns.length, plan.turns[0]?.minTools, stops.length]).toEqual([1, 2, 1]);
+  });
+
+  it("counts a peer message that arrives mid-turn as part of the running turn", () => {
+    const peer = {
+      type: "user",
+      isMeta: true,
+      origin: { kind: "peer" },
+      message: { content: "hi" },
+    };
+    const plan = claudePlan([
+      ...claudeTranscript.slice(0, 3),
+      peer,
+      ...claudeTranscript.slice(1, 4),
+    ]);
+    expect(plan.turns.map((turn) => [turn.prompt, turn.minTools])).toEqual([["list files", 2]]);
+  });
+
+  it("expects a task notification's summary as its prompt", () => {
+    const notice =
+      "<task-notification>\n<task-id>b1</task-id>\n<summary> Build finished </summary>";
+    const plan = claudePlan([{ type: "user", sessionId: "s1", message: { content: notice } }]);
+    expect(plan.turns.map((turn) => turn.prompt)).toEqual(["Build finished"]);
   });
 
   it("replays a subagent's hooks before its Agent call finishes", () => {
@@ -404,7 +502,7 @@ describe("claudePlan", () => {
 describe("codexPlan", () => {
   it("emits the event that tool pacing waits on", () => {
     expect(codexPlan(codexRollout).events.map((event) => event.payload.hook_event_name)).toContain(
-      TOOL_START_EVENT.codex,
+      TURN_EVENTS.codex.toolStart,
     );
   });
 
@@ -474,5 +572,56 @@ describe("codexPlan", () => {
       ...codexRollout.slice(1),
     ];
     expect(codexPlan(child).turns).toEqual([]);
+  });
+});
+
+describe("cursorPlan", () => {
+  it("expects one turn per prompt with its tools and reply", () => {
+    expect(cursorPlan(cursorTranscript, new Map(), "conv-1").turns).toEqual([
+      {
+        prompt: "list files",
+        command: "",
+        minTools: 1,
+        maxTools: 1,
+        reply: "One file.",
+        expectsModelCall: true,
+      },
+    ]);
+  });
+
+  it("fires the hooks Cursor sends for one turn, in order", () => {
+    const events = cursorPlan(cursorTranscript, new Map(), "conv-1").events;
+    expect(
+      events.map(({ payload }) => [
+        payload.hook_event_name,
+        payload.conversation_id,
+        payload.generation_id,
+        payload.status,
+      ]),
+    ).toEqual([
+      ["sessionStart", "conv-1", "", undefined],
+      ["beforeSubmitPrompt", "conv-1", "conv-1-1", undefined],
+      ["postToolUse", "conv-1", "conv-1-1", undefined],
+      ["afterAgentResponse", "conv-1", "conv-1-1", undefined],
+      ["stop", "conv-1", "conv-1-1", "completed"],
+    ]);
+  });
+
+  it("stops an unfinished turn as aborted and starts the next one clean", () => {
+    const readOnly = {
+      role: "assistant",
+      message: { content: [{ type: "tool_use", name: "Read", input: { path: "a.txt" } }] },
+    };
+    const interrupted = [...cursorTranscript.slice(0, 2), cursorTranscript[0]!, readOnly];
+    const plan = cursorPlan([...interrupted, cursorTranscript[3]!], new Map(), "conv-1");
+    const stops = plan.events.filter(({ payload }) => payload.hook_event_name === "stop");
+    expect(stops.map(({ payload }) => [payload.generation_id, payload.status])).toEqual([
+      ["conv-1-1", "aborted"],
+      ["conv-1-2", "completed"],
+    ]);
+    expect(plan.turns.map((turn) => [turn.minTools, turn.reply])).toEqual([
+      [1, null],
+      [1, null],
+    ]);
   });
 });

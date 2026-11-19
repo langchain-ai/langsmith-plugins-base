@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { RunCapture } from "./fake/langsmith.ts";
 import { turnUploaded } from "./langsmith.ts";
 import type { TracedRun } from "./models.ts";
 
@@ -13,5 +14,15 @@ describe("turnUploaded", () => {
     expect(turnUploaded([root("2", true), root("1", false)], 2)).toBe(true);
     expect(turnUploaded([root("1", true), root("2", false)], 2)).toBe(false);
     expect(turnUploaded([root("2", true), root("1", false)], 3)).toBe(false);
+  });
+});
+
+describe("RunCapture", () => {
+  it("keeps a model call but drops its payloads, which the checker never reads", () => {
+    const capture = new RunCapture();
+    capture.receiveBatch({ post: [{ id: "m", run_type: "llm", inputs: { messages: ["big"] } }] });
+    capture.receiveBatch({ patch: [{ id: "m", outputs: { reply: "big" } }] });
+    expect(capture.runs()).toMatchObject([{ id: "m", run_type: "llm" }]);
+    expect(capture.runs()[0]).toMatchObject({ inputs: undefined, outputs: undefined });
   });
 });
