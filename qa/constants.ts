@@ -83,6 +83,7 @@ export const CLAUDE_PEER_ORIGIN = "peer";
 export const CLAUDE_LOCAL_OUTPUT_PREFIX = /^\s*<local-command-stdout>/;
 export const CLAUDE_LOCAL_COMMAND_SUBTYPE = "local_command";
 export const CLAUDE_BLOCKED_STOP = "hook_blocking_error";
+export const CLAUDE_STOP_CONTEXT = "hook_additional_context";
 export const HOOK_TIMEOUT_MS = 60_000;
 export const SESSION_START = { hook_event_name: "SessionStart", source: "startup" };
 export const SESSION_END = { hook_event_name: "SessionEnd", reason: "prompt_input_exit" };

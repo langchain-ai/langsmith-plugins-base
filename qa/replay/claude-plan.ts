@@ -1,5 +1,6 @@
 import {
   CLAUDE_BLOCKED_STOP,
+  CLAUDE_STOP_CONTEXT,
   CLAUDE_COMMAND_PROMPT,
   CLAUDE_LOCAL_COMMAND_SUBTYPE,
   CLAUDE_LOCAL_OUTPUT_PREFIX,
@@ -283,7 +284,8 @@ export function claudePlan(
       });
     }
     const { type, hookEvent } = line.attachment ?? {};
-    if (current === undefined && type === CLAUDE_BLOCKED_STOP && hookEvent === "Stop") {
+    const stopContinues = type === CLAUDE_BLOCKED_STOP || type === CLAUDE_STOP_CONTEXT;
+    if (current === undefined && stopContinues && hookEvent === "Stop") {
       current = turns.at(-1);
       stopHookActive = true;
     }

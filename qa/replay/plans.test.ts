@@ -316,6 +316,22 @@ describe("claudePlan", () => {
     ]);
   });
 
+  it("keeps a turn going after a Stop hook adds context", () => {
+    const continued = [{ type: "text", text: "Continued." }];
+    const plan = claudePlan([
+      ...claudeTranscript.slice(0, 4),
+      { type: "attachment", attachment: { type: "hook_additional_context", hookEvent: "Stop" } },
+      { type: "assistant", message: { id: "m5", stop_reason: "end_turn", content: continued } },
+    ]);
+    const stops = plan.events.filter((event) => event.payload.hook_event_name === "Stop");
+    const active = stops.map((stop) => stop.payload.stop_hook_active);
+    expect([plan.turns.length, plan.turns[0]?.reply, active]).toEqual([
+      1,
+      "Continued.",
+      [false, true],
+    ]);
+  });
+
   it("counts a peer message that arrives mid-turn as part of the running turn", () => {
     const peer = {
       type: "user",
