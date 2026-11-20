@@ -27,6 +27,7 @@ import type {
   NormalizedRunPatchValues,
   NormalizedRunSnapshot,
 } from "../upload/models.js";
+import { runEndStatus } from "../upload/run-status.js";
 import { createRunIdentity } from "./identity.js";
 import type {
   LifecycleTurnEvidence,
@@ -222,6 +223,7 @@ function projectPost(
     inputs: canonicalJsonObject(projected["inputs"], "Projected run inputs"),
     outputs: canonicalJsonObject(projected["outputs"], "Projected run outputs"),
     ...(run.end_time === undefined ? {} : { end_time: run.end_time }),
+    ...(run.status === undefined ? {} : { status: run.status }),
     ...(run.parent_run_id === undefined ? {} : { parent_run_id: run.parent_run_id }),
     ...(run.trace_id === undefined ? {} : { trace_id: run.trace_id }),
     ...(run.dotted_order === undefined ? {} : { dotted_order: run.dotted_order }),
@@ -264,12 +266,20 @@ function projectPatch(
   );
   if (patch.values.events !== undefined) tree.events = patch.values.events;
   const projected = tree.toJSON() as unknown as Record<string, unknown>;
-  const fields = survivingCodingAgentPatchFields(
-    projected,
-    patch.fields,
-  ) as NormalizedRunPatchField[];
+  const fields = [
+    ...survivingCodingAgentPatchFields(
+      projected,
+      patch.fields.filter((field) => field !== "status"),
+    ),
+    ...(patch.fields.includes("status") ? ["status"] : []),
+  ] as NormalizedRunPatchField[];
   const values: NormalizedRunPatchValues = {};
   for (const field of fields) {
+    if (field === "status") {
+      // A run status is not content, so it passes through metadata mode.
+      values.status = patch.values.status!;
+      continue;
+    }
     const value = ownDataField(projected, field);
     if (!value.present) continue;
     (values as Record<string, unknown>)[field] =
@@ -309,6 +319,9 @@ function normalizedRunSnapshot(value: unknown): NormalizedRunSnapshot {
   const error = ownDataField(source, "error");
   if (error.present && error.value !== undefined)
     run.error = requireString(error.value, "Run error");
+  const status = ownDataField(source, "status");
+  const endStatus = status.present ? runEndStatus(status.value) : undefined;
+  if (endStatus !== undefined) run.status = endStatus;
   const serialized = ownDataField(source, "serialized");
   if (serialized.present && serialized.value !== undefined)
     run.serialized = canonicalJsonObject(serialized.value, "Serialized run data");
@@ -402,6 +415,15 @@ function normalizedPatch(value: unknown): NormalizedRunPatch {
     const field = candidate as NormalizedRunPatchField;
     if (seen.has(field)) throw new TypeError(LIFECYCLE_PATCH_FIELDS_UNIQUE_MESSAGE);
     const selected = ownDataField(sourceValues, field);
+    if (field === "status") {
+      seen.add(field);
+      const endStatus = selected.present ? runEndStatus(selected.value) : undefined;
+      if (endStatus !== undefined) {
+        fields.push(field);
+        values.status = endStatus;
+      }
+      continue;
+    }
     if (!selected.present || selected.value === undefined) {
       throw new TypeError(LIFECYCLE_PATCH_FIELD_VALUE_MESSAGE);
     }

@@ -23,6 +23,8 @@ export interface SdkOmittedRunFields {
   events?: RunTree["events"];
 }
 
+export type RunEndStatus = "cancelled" | "interrupted";
+
 export interface NormalizedRunSnapshot {
   id: string;
   name: string;
@@ -36,6 +38,7 @@ export interface NormalizedRunSnapshot {
   dotted_order?: string;
   tags?: string[];
   error?: string;
+  status?: RunEndStatus;
   serialized?: object;
   events?: RunTree["events"];
   reference_example_id?: string;
@@ -56,6 +59,7 @@ export interface NormalizedRunPatchValues {
   outputs?: Record<string, unknown>;
   end_time?: number | string;
   error?: string;
+  status?: RunEndStatus;
   tags?: string[];
   serialized?: object;
   events?: RunTree["events"];

@@ -45,6 +45,7 @@ import { applyReplicaPatchUpdates } from "./replica-updates.js";
 import { withDeadline } from "./deadline.js";
 import { isSampled, samplingRate } from "./sampling.js";
 import { startTimeText } from "./timestamps.js";
+import { runEndStatus } from "./run-status.js";
 
 export function createLangSmithUploadWriter(
   options: LangSmithUploadWriterOptions,
@@ -279,6 +280,9 @@ function preparePostRunPayload(
   const create = JSON.parse(JSON.stringify(run.toJSON())) as RunCreate;
   const startTime = startTimeText(source.start_time, create.dotted_order);
   if (startTime !== undefined) create.start_time = startTime;
+  // Set on the payload, not the RunTree: a langsmith without `status` would drop it.
+  const status = runEndStatus(source.status);
+  if (status !== undefined) (create as { status?: string }).status = status;
   return create;
 }
 
@@ -332,6 +336,10 @@ function preparePatchRunPayload(
       update.reference_example_id = value as NonNullable<RunUpdate["reference_example_id"]>;
     }
   }
+  const status = submission.patch.fields.includes("status")
+    ? runEndStatus(submission.patch.values.status)
+    : undefined;
+  if (status !== undefined) (update as { status?: string }).status = status;
   return update;
 }
 

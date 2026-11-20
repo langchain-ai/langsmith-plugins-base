@@ -6,4 +6,5 @@ export type {
   PreparedRunPatchSubmission,
   PreparedRunPostSubmission,
   PreparedRunSubmission,
+  RunEndStatus,
 } from "./models.js";
