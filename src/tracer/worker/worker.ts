@@ -1,4 +1,12 @@
-import { appendFileSync, mkdirSync, statSync, truncateSync, watch, type FSWatcher } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  statSync,
+  truncateSync,
+  watch,
+  type FSWatcher,
+} from "node:fs";
 import { basename } from "node:path";
 import { describe } from "../../utils/errors.js";
 import { WORKER_LOG_MAX_BYTES } from "../../plugin/constants.js";
@@ -195,6 +203,9 @@ class TracerWorker {
       parked[session.sessionId] = session.bookmarks;
       this.sessions.delete(session.sessionId);
     }
+    for (const [sessionId, bookmarks] of Object.entries(parked))
+      if (Object.values(bookmarks).every((bookmark) => !existsSync(bookmark.path)))
+        delete parked[sessionId];
     this.saved = {
       version: SNAPSHOT_VERSION,
       sessions: Object.fromEntries(
