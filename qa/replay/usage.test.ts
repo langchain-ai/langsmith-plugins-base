@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { usageLine, usageSummary, usagesFromLog } from "./usage.ts";
+import { usageChange, usageLine, usageSummary, usagesFromLog } from "./usage.ts";
 
 describe("usageSummary", () => {
   it("reports the nearest-rank p50, p95 and p99 across sessions", () => {
@@ -25,6 +25,23 @@ describe("usageSummary", () => {
     const second = `SKIP b.jsonl (no user turns)\n${usageLine("c.jsonl", { cpuMs: 800, peakMemoryBytes: 50 * 1024 * 1024, exitedOnItsOwn: false })}\n`;
     expect(usageSummary([...usagesFromLog(first), ...usagesFromLog(second)])).toBe(
       "2 sessions, CPU ms p50 800, p95 1200, p99 1200, peak memory MB p50 50, p95 64.5, p99 64.5",
+    );
+  });
+});
+
+describe("usageChange", () => {
+  it("reports each percentile's change from the baseline, signed and rounded", () => {
+    const megabyte = 1024 * 1024;
+    const baseline = Array.from({ length: 100 }, (_, index) => ({
+      cpuMs: (index + 1) * 10,
+      peakMemoryBytes: 200 * megabyte,
+    }));
+    const usages = Array.from({ length: 100 }, (_, index) => ({
+      cpuMs: index + 1,
+      peakMemoryBytes: (index < 95 ? 100 : 201) * megabyte,
+    }));
+    expect(usageChange(usages, baseline)).toBe(
+      "Against the baseline's 100 sessions, CPU p50 -90%, p95 -90%, p99 -90%, peak memory p50 -50%, p95 -50%, p99 +1%",
     );
   });
 });

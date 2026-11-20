@@ -123,7 +123,7 @@ function skipReason(plan: ReplayPlan): string | undefined {
     (event) => event.payload.hook_event_name === PROMPT_EVENT,
   );
   const finished = plan.events
-    .slice(lastPrompt)
+    .slice(Math.max(lastPrompt, 0))
     .some((event) => event.payload.hook_event_name === STOP_EVENT);
   return finished ? undefined : "ends mid-turn";
 }
@@ -223,7 +223,7 @@ async function replaySession(
       if (exitCode !== 0)
         console.warn(`${event.payload.hook_event_name} hook exited with ${exitCode}`);
     }
-    if (event.payload.hook_event_name === STOP_EVENT)
+    if (event.payload.hook_event_name === STOP_EVENT && event.payload.stop_hook_active !== true)
       await waitForTurnUpload(server, ++finishedTurns);
   }
   await waitForQuietUploads(server, plan.turns.length);

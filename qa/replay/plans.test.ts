@@ -237,13 +237,130 @@ describe("claudePlan", () => {
     ]);
   });
 
-  it("marks a turn that never stopped so the checker expects no trace for it", () => {
+  it("expects no turn for a local command whose output is logged as a system line", () => {
     const plan = claudePlan([
-      { type: "user", sessionId: "s1", message: { content: "first" } },
-      { type: "user", message: { content: "second" } },
+      {
+        type: "user",
+        sessionId: "s1",
+        message: { content: "<command-name>/usage</command-name>" },
+      },
+      { type: "system", subtype: "local_command", content: "<local-command-stdout>" },
+      { type: "user", message: { content: "thanks" } },
       { type: "assistant", message: { id: "m1", stop_reason: "end_turn", content: [] } },
     ]);
-    expect(plan.turns.map((turn) => turn.stops)).toEqual([false, undefined]);
+    expect(plan.turns.map((turn) => turn.prompt)).toEqual(["thanks"]);
+  });
+
+  it("expects no turn for a notice Claude Code only writes to the transcript", () => {
+    const notice = { type: "user", queueTranscriptOnly: true, message: { content: "done" } };
+    const plan = claudePlan([{ ...notice, sessionId: "s1" }, ...claudeTranscript.slice(0, 4)]);
+    expect(plan.turns.map((turn) => turn.prompt)).toEqual(["list files"]);
+  });
+
+  it("expects a slash command and a shell command as they were typed", () => {
+    const done = { type: "assistant", message: { id: "m1", stop_reason: "end_turn", content: [] } };
+    const command =
+      "<command-message>review</command-message>\n<command-name>/review</command-name>\n<command-args>42</command-args>";
+    const plan = claudePlan([
+      { type: "user", sessionId: "s1", message: { content: command } },
+      done,
+      {
+        type: "user",
+        message: { content: "<bash-input> ls </bash-input><bash-stdout>a</bash-stdout>" },
+      },
+      { ...done, message: { ...done.message, id: "m2" } },
+    ]);
+    expect(plan.turns.map((turn) => turn.prompt)).toEqual(["/review 42", "ls"]);
+  });
+
+  it("expects a turn for a prompt Claude Code submits itself", () => {
+    const scheduled = {
+      type: "user",
+      isMeta: true,
+      turnPosition: {},
+      message: { content: "tick" },
+    };
+    const plan = claudePlan([{ ...scheduled, sessionId: "s1" }, claudeTranscript[3]!]);
+    expect(plan.turns.map((turn) => [turn.prompt, turn.reply])).toEqual([["tick", "One file."]]);
+  });
+
+  it("keeps a turn going when Claude Code continues it after its reply", () => {
+    const continued = [
+      ...claudeTranscript.slice(0, 4),
+      { type: "user", isMeta: true, turnCompanion: true, message: { content: "check it" } },
+      ...claudeTranscript.slice(1, 3),
+      { type: "assistant", message: { id: "m5", stop_reason: "end_turn", content: [] } },
+    ];
+    const plan = claudePlan(continued);
+    const stops = plan.events.filter((event) => event.payload.hook_event_name === "Stop");
+    expect([plan.turns.length, plan.turns[0]?.minTools, stops.length]).toEqual([1, 2, 1]);
+  });
+
+  it("keeps a turn going after a blocked Stop and fires a second Stop at its final reply", () => {
+    const retried = [{ type: "text", text: "Retried." }];
+    const blocked = [
+      ...claudeTranscript.slice(0, 4),
+      { type: "user", isMeta: true, message: { content: "Stop hook feedback: retry" } },
+      { type: "attachment", attachment: { type: "hook_blocking_error", hookEvent: "Stop" } },
+      { type: "assistant", message: { id: "m5", stop_reason: "end_turn", content: retried } },
+      { type: "user", isMeta: true, turnCompanion: true, message: { content: "reminder" } },
+      { type: "user", message: { content: "next" } },
+    ];
+    const plan = claudePlan(blocked);
+    const stops = plan.events.filter((event) => event.payload.hook_event_name === "Stop");
+    const active = stops.map((stop) => stop.payload.stop_hook_active);
+    expect([plan.turns.length, plan.turns[0]?.reply, active]).toEqual([
+      2,
+      "Retried.",
+      [false, true],
+    ]);
+  });
+
+  it("keeps a turn going after a Stop hook adds context", () => {
+    const continued = [{ type: "text", text: "Continued." }];
+    const plan = claudePlan([
+      ...claudeTranscript.slice(0, 4),
+      { type: "attachment", attachment: { type: "hook_additional_context", hookEvent: "Stop" } },
+      { type: "assistant", message: { id: "m5", stop_reason: "end_turn", content: continued } },
+    ]);
+    const stops = plan.events.filter((event) => event.payload.hook_event_name === "Stop");
+    const active = stops.map((stop) => stop.payload.stop_hook_active);
+    expect([plan.turns.length, plan.turns[0]?.reply, active]).toEqual([
+      1,
+      "Continued.",
+      [false, true],
+    ]);
+  });
+
+  it("counts a peer message that arrives mid-turn as part of the running turn", () => {
+    const peer = {
+      type: "user",
+      isMeta: true,
+      origin: { kind: "peer" },
+      message: { content: "hi" },
+    };
+    const plan = claudePlan([
+      ...claudeTranscript.slice(0, 3),
+      peer,
+      ...claudeTranscript.slice(1, 4),
+    ]);
+    expect(plan.turns.map((turn) => [turn.prompt, turn.minTools])).toEqual([["list files", 2]]);
+  });
+
+  it("expects one turn for task notifications queued before the model answers", () => {
+    const plan = claudePlan([
+      ...claudeTranscript.slice(0, 4),
+      said(5, "<task-notification>\n<task-id>b1</task-id>"),
+      said(6, "<task-notification>\n<task-id>b2</task-id>"),
+    ]);
+    expect(plan.turns.length).toBe(2);
+  });
+
+  it("expects a task notification's summary as its prompt", () => {
+    const notice =
+      "<task-notification>\n<task-id>b1</task-id>\n<summary> Build finished </summary>";
+    const plan = claudePlan([{ type: "user", sessionId: "s1", message: { content: notice } }]);
+    expect(plan.turns.map((turn) => turn.prompt)).toEqual(["Build finished"]);
   });
 
   it("replays a subagent's hooks before its Agent call finishes", () => {
@@ -332,6 +449,66 @@ describe("claudePlan", () => {
       ["SubagentStop", undefined],
       ["Stop", undefined],
       ["SessionEnd", undefined],
+    ]);
+  });
+
+  it("leaves out the parent's Agent call that a forked subagent copies into its transcript", () => {
+    const launched = [
+      { ...said(0, "explore"), sessionId: "s1" },
+      toolCalls(1, { id: "f1", name: "Agent" }),
+      toolResults(2, ["f1"], { agentId: "x4", status: "async_launched" }),
+      { type: "assistant", timestamp: at(9), message: { stop_reason: "end_turn", content: [] } },
+    ];
+    const fork = jsonLines([
+      { type: "fork-context-ref", agentId: "x4" },
+      toolCalls(1, { id: "f1", name: "Agent" }),
+      toolResults(2, ["f1"]),
+      toolCalls(3, { id: "s1", name: "Bash" }),
+      toolResults(4, ["s1"]),
+    ]);
+    const plan = claudePlan(launched, new Map([["x4", fork]]));
+    expect(
+      plan.events
+        .filter((event) => event.agentId === "x4")
+        .map((event) => [event.payload.hook_event_name, event.payload.tool_use_id]),
+    ).toEqual([
+      ["PreToolUse", "s1"],
+      ["PostToolUse", "s1"],
+      ["SubagentStop", undefined],
+    ]);
+    expect(plan.turns[0]?.minTools).toBe(2);
+  });
+
+  it("plans a turn for model work that has no prompt of its own and stops it", () => {
+    const plan = claudePlan([
+      { ...said(0, "summary"), sessionId: "s1", isCompactSummary: true },
+      toolCalls(1, { id: "t1", name: "Bash" }),
+      toolResults(2, ["t1"]),
+      {
+        type: "assistant",
+        timestamp: at(3),
+        message: { id: "m1", stop_reason: "end_turn", content: [] },
+      },
+      said(4, "next"),
+      {
+        type: "assistant",
+        timestamp: at(5),
+        message: { id: "m2", stop_reason: "end_turn", content: [] },
+      },
+    ]);
+    expect(plan.turns.map(({ prompt, minTools }) => [prompt, minTools])).toEqual([
+      ["", 1],
+      ["next", 0],
+    ]);
+    expect(plan.events.map((event) => event.payload.hook_event_name)).toEqual([
+      "SessionStart",
+      "PostCompact",
+      "PreToolUse",
+      "PostToolUse",
+      "Stop",
+      "UserPromptSubmit",
+      "Stop",
+      "SessionEnd",
     ]);
   });
 

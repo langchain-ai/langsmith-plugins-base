@@ -73,10 +73,17 @@ export const FAKE_SERVER_INFO = {
 
 export const CLAUDE_NON_PROMPT_PREFIX =
   /^\s*(<local-command|<bash-stdout|<bash-stderr|\[Request interrupted by user)/;
-export const CLAUDE_SHELL_PROMPT = /^\s*<bash-input>([\s\S]*)<\/bash-input>\s*$/;
+export const CLAUDE_SHELL_PROMPT = /^\s*<bash-input>([\s\S]*?)<\/bash-input>/;
+export const CLAUDE_COMMAND_PROMPT =
+  /^(?:<command-message>[\s\S]*?<\/command-message>\s*)?<command-name>([\s\S]*?)<\/command-name>\s*(?:<command-args>([\s\S]*?)<\/command-args>)?/;
 export const CLAUDE_SYSTEM_REMINDER = /<system-reminder>[\s\S]*?<\/system-reminder>/g;
+export const CLAUDE_TASK_NOTIFICATION = /^<task-notification>/;
+export const CLAUDE_TASK_SUMMARY = /^<task-notification>[\s\S]*?<summary>([\s\S]*?)<\/summary>/;
 export const CLAUDE_PEER_ORIGIN = "peer";
 export const CLAUDE_LOCAL_OUTPUT_PREFIX = /^\s*<local-command-stdout>/;
+export const CLAUDE_LOCAL_COMMAND_SUBTYPE = "local_command";
+export const CLAUDE_BLOCKED_STOP = "hook_blocking_error";
+export const CLAUDE_STOP_CONTEXT = "hook_additional_context";
 export const HOOK_TIMEOUT_MS = 60_000;
 export const SESSION_START = { hook_event_name: "SessionStart", source: "startup" };
 export const SESSION_END = { hook_event_name: "SessionEnd", reason: "prompt_input_exit" };

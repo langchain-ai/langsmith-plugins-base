@@ -27,6 +27,10 @@ on:
         description: How many runners each agent's sessions are split across.
         type: number
         default: 10
+      save_baseline:
+        description: Save this run's CPU and memory as the baseline later runs compare against, and skip the replay when nothing changed since the last one.
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -38,10 +42,60 @@ env:
   LANGSMITH_API_KEY: ""
   OPENAI_API_KEY: ""
   ANTHROPIC_API_KEY: ""
+  BASELINE_ARTIFACT: replay-baseline
 
 jobs:
+  find-baseline:
+    name: Find the Latest Baseline
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      artifact-id: ${{ steps.find.outputs.artifact-id }}
+      fingerprint: ${{ steps.find.outputs.fingerprint }}
+      unchanged: ${{ steps.find.outputs.unchanged }}
+    steps:
+      - name: Check Out the Transcripts
+        if: inputs.save_baseline
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: ${{ inputs.transcripts }}
+          filter: blob:none
+      - name: Compare What Would Run With the Latest Baseline
+        id: find
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TRANSCRIPTS: ${{ inputs.transcripts }}
+          ENGINE_REPOSITORY: ${{ job.workflow_repository }}
+          ENGINE_REF: ${{ inputs.engine_ref || job.workflow_sha }}
+          CLAUDE_PLUGIN_REF: ${{ inputs.claude_plugin_ref }}
+          CODEX_PLUGIN_REF: ${{ inputs.codex_plugin_ref }}
+          SAVE_BASELINE: ${{ inputs.save_baseline }}
+        run: |
+          baseline=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=$BASELINE_ARTIFACT&per_page=1" --jq '.artifacts[0] | select(. != null and (.expired | not))')
+          id=$(jq -r .id <<< "$baseline")
+          echo "artifact-id=$id" >> "$GITHUB_OUTPUT"
+          if [ "$SAVE_BASELINE" != true ]; then exit 0; fi
+          commit() { gh api "repos/$1/commits/${2:-HEAD}" --jq .sha; }
+          fingerprint="engine $(commit "$ENGINE_REPOSITORY" "$ENGINE_REF")"
+          fingerprint+=", claude plugin $(commit langchain-ai/langsmith-claude-code-plugins "$CLAUDE_PLUGIN_REF")"
+          fingerprint+=", codex plugin $(commit langchain-ai/langsmith-codex-plugins "$CODEX_PLUGIN_REF")"
+          fingerprint+=", transcripts $(git rev-parse "HEAD:$TRANSCRIPTS")"
+          echo "fingerprint=$fingerprint" >> "$GITHUB_OUTPUT"
+          if [ -z "$id" ]; then exit 0; fi
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" > "$RUNNER_TEMP/baseline.zip"
+          saved=$(unzip -p "$RUNNER_TEMP/baseline.zip" fingerprint)
+          expires=$(date -d "$(jq -r .expires_at <<< "$baseline")" +%s)
+          if [ "$saved" = "$fingerprint" ] && [ "$expires" -gt "$(date -d '+7 days' +%s)" ]; then
+            echo "unchanged=true" >> "$GITHUB_OUTPUT"
+            echo "Skipped the replay since nothing changed since the latest baseline ($saved)" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
   split-transcripts:
     name: Split the Transcripts Across Runners
+    needs: find-baseline
+    if: ${{ !cancelled() && needs.find-baseline.outputs.unchanged != 'true' }}
     runs-on: ubuntu-latest
     outputs:
       shards: ${{ steps.split.outputs.shards }}
@@ -84,6 +138,7 @@ jobs:
   replay-transcripts:
     name: Replay ${{ matrix.agent }} Transcripts, Part ${{ matrix.shard }}
     needs: split-transcripts
+    if: ${{ !cancelled() && needs.split-transcripts.result == 'success' }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -141,9 +196,12 @@ jobs:
 
   summarize-usage:
     name: Summarize CPU and Memory Across Parts
-    needs: replay-transcripts
-    if: ${{ !cancelled() }}
+    needs: [find-baseline, replay-transcripts]
+    if: ${{ !cancelled() && needs.replay-transcripts.result != 'skipped' }}
     runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
     steps:
       - name: Check Out This Engine
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -159,15 +217,42 @@ jobs:
         with:
           pattern: replay-usage-*
           path: ${{ runner.temp }}/replay-usage
+      - name: Download the Latest Baseline
+        if: needs.find-baseline.outputs.artifact-id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASELINE_ID: ${{ needs.find-baseline.outputs.artifact-id }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$BASELINE_ID/zip" > "$RUNNER_TEMP/baseline.zip"
+          unzip -q "$RUNNER_TEMP/baseline.zip" -d "$RUNNER_TEMP/baseline"
       - name: Summarize Each Agent
         run: |
           shopt -s nullglob
           for agent in claude codex; do
             logs=("$RUNNER_TEMP"/replay-usage/replay-usage-"$agent"-*/replay.log)
+            baseline=()
+            if [ -f "$RUNNER_TEMP/baseline/$agent.log" ]; then baseline=(--baseline "$RUNNER_TEMP/baseline/$agent.log"); fi
             echo "### Plugin CPU and memory on $agent across all parts"
             if [ ${#logs[@]} -eq 0 ]; then
               echo "No $agent sessions were replayed"
             else
-              node qa/usage-summary.ts "${logs[@]}"
+              node qa/usage-summary.ts "${baseline[@]}" "${logs[@]}"
             fi
           done >> "$GITHUB_STEP_SUMMARY"
+      - name: Collect This Run as the New Baseline
+        if: inputs.save_baseline && needs.find-baseline.result == 'success' && needs.replay-transcripts.result == 'success'
+        env:
+          FINGERPRINT: ${{ needs.find-baseline.outputs.fingerprint }}
+        run: |
+          mkdir "$RUNNER_TEMP/new-baseline"
+          for agent in claude codex; do
+            cat "$RUNNER_TEMP"/replay-usage/replay-usage-"$agent"-*/replay.log > "$RUNNER_TEMP/new-baseline/$agent.log"
+          done
+          printf '%s' "$FINGERPRINT" > "$RUNNER_TEMP/new-baseline/fingerprint"
+      - name: Save the New Baseline
+        if: inputs.save_baseline && needs.find-baseline.result == 'success' && needs.replay-transcripts.result == 'success'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ env.BASELINE_ARTIFACT }}
+          path: ${{ runner.temp }}/new-baseline
+          retention-days: 90

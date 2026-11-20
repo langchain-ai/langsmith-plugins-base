@@ -8,7 +8,6 @@ export interface ScenarioTurn {
   reply?: string | null;
   expectsModelCall?: boolean;
   toolOutputContains?: string;
-  stops?: boolean;
 }
 
 export interface Scenario {
@@ -65,6 +64,7 @@ export interface TracedRun {
 
 export interface RootOutputs {
   messages?: unknown;
+  text?: unknown;
 }
 
 export interface Workspace {

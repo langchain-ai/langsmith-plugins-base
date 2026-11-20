@@ -1,9 +1,15 @@
 import {
+  CLAUDE_BLOCKED_STOP,
+  CLAUDE_STOP_CONTEXT,
+  CLAUDE_COMMAND_PROMPT,
+  CLAUDE_LOCAL_COMMAND_SUBTYPE,
   CLAUDE_LOCAL_OUTPUT_PREFIX,
   CLAUDE_NON_PROMPT_PREFIX,
   CLAUDE_PEER_ORIGIN,
   CLAUDE_SHELL_PROMPT,
   CLAUDE_SYSTEM_REMINDER,
+  CLAUDE_TASK_NOTIFICATION,
+  CLAUDE_TASK_SUMMARY,
   DEFAULT_SUBAGENT_TYPE,
   PRE_TOOL_EVENT,
   REPLAY_PERMISSION_MODE,
@@ -30,9 +36,16 @@ function blocks(line: TranscriptLine, type: string): TranscriptLine[] {
   return Array.isArray(content) ? content.filter((block) => block?.type === type) : [];
 }
 
-function isUserText(line: TranscriptLine | undefined): line is TranscriptLine {
-  if (line?.type !== "user" || line.isCompactSummary || line.isSidechain) return false;
-  if (line.isMeta && line.origin?.kind !== CLAUDE_PEER_ORIGIN) return false;
+function isUserText(line: TranscriptLine | undefined): line is TranscriptLine & { type: "user" } {
+  if (
+    line?.type !== "user" ||
+    line.isCompactSummary ||
+    line.isSidechain ||
+    line.queueTranscriptOnly
+  )
+    return false;
+  if (line.isMeta && line.origin?.kind !== CLAUDE_PEER_ORIGIN && line.turnPosition === undefined)
+    return false;
   return blocks(line, "tool_result").length === 0;
 }
 
@@ -40,22 +53,34 @@ function isPrompt(lines: TranscriptLine[], index: number): boolean {
   const line = lines[index];
   if (!isUserText(line) || CLAUDE_NON_PROMPT_PREFIX.test(textOf(line.message?.content)))
     return false;
-  const reply = lines.slice(index + 1).find(isUserText);
-  return !CLAUDE_LOCAL_OUTPUT_PREFIX.test(textOf(reply?.message?.content));
+  const reply = lines
+    .slice(index + 1)
+    .find((later) => isUserText(later) || later.subtype === CLAUDE_LOCAL_COMMAND_SUBTYPE);
+  return (
+    reply?.subtype !== CLAUDE_LOCAL_COMMAND_SUBTYPE &&
+    !CLAUDE_LOCAL_OUTPUT_PREFIX.test(textOf(reply?.message?.content))
+  );
 }
 
 function promptText(line: TranscriptLine): string {
   const text = textOf(line.message?.content).replace(CLAUDE_SYSTEM_REMINDER, "").trim();
-  return CLAUDE_SHELL_PROMPT.exec(text)?.[1] ?? text;
+  const command = CLAUDE_COMMAND_PROMPT.exec(text);
+  if (command !== null) return `${command[1]?.trim()} ${command[2]?.trim() ?? ""}`.trim();
+  return (
+    CLAUDE_SHELL_PROMPT.exec(text)?.[1]?.trim() ??
+    CLAUDE_TASK_SUMMARY.exec(text)?.[1]?.trim() ??
+    text
+  );
 }
 
 function endsTurn(lines: TranscriptLine[], index: number): boolean {
   const line = lines[index];
   if (line?.type !== "assistant" || line.isSidechain || line.message?.stop_reason !== "end_turn")
     return false;
-  const next = lines
-    .slice(index + 1)
-    .find((later) => later.type === "assistant" || isUserText(later));
+  const later = lines.slice(index + 1);
+  const next = later.find((after) => after.type === "assistant" || isUserText(after));
+  const companion = later.find((after) => after === next || after.turnCompanion)?.turnCompanion;
+  if (companion) return isUserText(next);
   return next === undefined || next.message?.id !== line.message?.id;
 }
 
@@ -161,11 +186,13 @@ function subagentEvents(
     if (line.type === "assistant") {
       for (const text of blocks(line, "text")) lastText = String(text.text);
       for (const use of blocks(line, "tool_use")) {
+        if (use.id === launch.toolUseId) continue;
         toolUses.set(use.id, use);
         emit(index + 1, preToolUse(use));
       }
     }
     for (const result of line.type === "user" ? blocks(line, "tool_result") : []) {
+      if (result.tool_use_id === launch.toolUseId) continue;
       const use = toolUses.get(result.tool_use_id);
       const child = launchedSubagent(transcripts, launched, line, result, use);
       if (child !== undefined)
@@ -225,6 +252,7 @@ export function claudePlan(
     ),
   );
   let current: ScenarioTurn | undefined;
+  let stopHookActive = false;
   let lastText = "";
   let at = Number.NaN;
 
@@ -255,8 +283,14 @@ export function claudePlan(
         compact_summary: textOf(line.message?.content),
       });
     }
-    if (isPrompt(lines, index)) {
-      if (current !== undefined) current.stops = false;
+    const { type, hookEvent } = line.attachment ?? {};
+    const stopContinues = type === CLAUDE_BLOCKED_STOP || type === CLAUDE_STOP_CONTEXT;
+    if (current === undefined && stopContinues && hookEvent === "Stop") {
+      current = turns.at(-1);
+      stopHookActive = true;
+    }
+    const joins = line.isMeta || CLAUDE_TASK_NOTIFICATION.test(textOf(line.message?.content));
+    if (isPrompt(lines, index) && !(joins && current !== undefined)) {
       current = {
         prompt: promptText(line),
         command: "",
@@ -268,6 +302,18 @@ export function claudePlan(
       turns.push(current);
       lastText = "";
       emit(index, { hook_event_name: "UserPromptSubmit", prompt: current.prompt });
+    }
+    if (line.type === "assistant" && !line.isSidechain && current === undefined) {
+      current = {
+        prompt: "",
+        command: "",
+        minTools: 0,
+        maxTools: 0,
+        reply: null,
+        expectsModelCall: false,
+      };
+      turns.push(current);
+      lastText = "";
     }
     if (line.type === "assistant" && !line.isSidechain) {
       if (current !== undefined) current.expectsModelCall = true;
@@ -308,10 +354,11 @@ export function claudePlan(
       if (lastText.length > 0) current.reply = lastText;
       emit(index + 1, {
         hook_event_name: "Stop",
-        stop_hook_active: false,
+        stop_hook_active: stopHookActive,
         last_assistant_message: lastText,
       });
       current = undefined;
+      stopHookActive = false;
     }
   }
   const replayed = withSubagents(events, times, placed);
