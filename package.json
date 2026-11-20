@@ -112,7 +112,7 @@
     "test": "vitest run"
   },
   "devDependencies": {
-    "@lydell/node-pty": "1.2.0-beta.15",
+    "@lydell/node-pty": "1.2.0-beta.18",
     "@types/node": "^26.6.4",
     "langsmith": "0.11.8",
     "oxfmt": "^0.77.0",
