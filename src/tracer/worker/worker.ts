@@ -1,6 +1,7 @@
-import { appendFileSync, mkdirSync, watch, type FSWatcher } from "node:fs";
+import { appendFileSync, mkdirSync, statSync, truncateSync, watch, type FSWatcher } from "node:fs";
 import { basename } from "node:path";
 import { describe } from "../../utils/errors.js";
+import { WORKER_LOG_MAX_BYTES } from "../../plugin/constants.js";
 import {
   TRACER_FOLDER_MODE,
   SNAPSHOT_VERSION,
@@ -67,6 +68,10 @@ class TracerWorker {
   }
 
   start(): void {
+    this.attempt("could not trim the log", () => {
+      const size = statSync(this.options.paths.log, { throwIfNoEntry: false })?.size ?? 0;
+      if (size > WORKER_LOG_MAX_BYTES) truncateSync(this.options.paths.log);
+    });
     this.log(`${WORKER_STARTED_LOG} ${process.pid}`);
     this.attempt("could not upgrade older state", () => this.options.upgradeState(this.log));
     this.attempt("could not load the snapshot", () => {
@@ -187,7 +192,7 @@ class TracerWorker {
     const parked = { ...this.saved.parked };
     for (const session of sessions) {
       if (!canForget(session)) continue;
-      if (!session.ended) parked[session.sessionId] = session.bookmarks;
+      parked[session.sessionId] = session.bookmarks;
       this.sessions.delete(session.sessionId);
     }
     this.saved = {
