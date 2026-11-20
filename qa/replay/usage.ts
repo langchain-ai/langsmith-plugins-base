@@ -53,10 +53,28 @@ export async function closeUsageGroup(group: string): Promise<EngineUsage> {
   return usage;
 }
 
-function percentiles(values: number[]): string {
+function nearestRank(values: number[], percent: number): number {
   const sorted = values.toSorted((a, b) => a - b);
+  const value = sorted[Math.ceil((percent / 100) * sorted.length) - 1];
+  if (value === undefined) throw new Error("no usage samples to rank");
+  return value;
+}
+
+function percentiles(values: number[]): string {
+  return USAGE_PERCENTILES.map((percent) => `p${percent} ${nearestRank(values, percent)}`).join(
+    ", ",
+  );
+}
+
+function signedPercentChange(value: number, baseline: number): string {
+  const change = Math.round(((value - baseline) / baseline) * 100);
+  return `${change > 0 ? "+" : ""}${change}%`;
+}
+
+function percentileChanges(values: number[], baselineValues: number[]): string {
   return USAGE_PERCENTILES.map(
-    (percent) => `p${percent} ${sorted[Math.ceil((percent / 100) * sorted.length) - 1]}`,
+    (percent) =>
+      `p${percent} ${signedPercentChange(nearestRank(values, percent), nearestRank(baselineValues, percent))}`,
   ).join(", ");
 }
 
@@ -78,4 +96,16 @@ export function usageSummary(usages: UsageSample[]): string {
     usages.map((usage) => Math.round((usage.peakMemoryBytes / BYTES_PER_MEGABYTE) * 10) / 10),
   );
   return `${usages.length} sessions, CPU ms ${cpu}, peak memory MB ${memory}`;
+}
+
+export function usageChange(usages: UsageSample[], baseline: UsageSample[]): string {
+  const cpu = percentileChanges(
+    usages.map((usage) => usage.cpuMs),
+    baseline.map((usage) => usage.cpuMs),
+  );
+  const memory = percentileChanges(
+    usages.map((usage) => usage.peakMemoryBytes),
+    baseline.map((usage) => usage.peakMemoryBytes),
+  );
+  return `Against the baseline's ${baseline.length} sessions, CPU ${cpu}, peak memory ${memory}`;
 }
