@@ -3,6 +3,7 @@ import { once } from "node:events";
 import {
   appendFileSync,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   statSync,
@@ -22,6 +23,7 @@ import { tracerPaths } from "../paths.js";
 import { sendHookNote } from "./hook.js";
 import { IDLE_EXIT_MS, TICK_MS, WORKER_STARTED_LOG } from "../constants.js";
 import { processIsAlive } from "../../storage/file-lock-support.js";
+import { WORKER_LOG_MAX_BYTES } from "../../plugin/constants.js";
 
 vi.setConfig({ testTimeout: 15_000 });
 
@@ -317,6 +319,38 @@ it("sets aside a session with no notes for a day and picks it up where it left o
   ]);
   const parked = () => JSON.parse(readFileSync(box.paths.snapshot, "utf8")).parked;
   await waitFor(() => !("stale" in parked()), "the resumed session to leave the parked list");
+});
+
+it("picks up an ended session where it left off when it resumes", async () => {
+  const box = sandbox();
+  writeFileSync(box.main, transcriptLine("O1"));
+  hook(box, note(box, "Start"));
+  hook(box, note(box, "SessionEnd"));
+  const parked = () =>
+    existsSync(box.paths.snapshot)
+      ? (JSON.parse(readFileSync(box.paths.snapshot, "utf8")).parked ?? {})
+      : {};
+  await waitFor(() => "s" in parked(), "the ended session to be set aside");
+
+  appendFileSync(box.main, transcriptLine("N1"));
+  hook(box, note(box, "Next"));
+  await waitFor(() => lines(box.record).includes("s line N1"), "the new line");
+  expect(lines(box.record).filter((entry) => entry.startsWith("s line"))).toEqual([
+    "s line O1",
+    "s line N1",
+  ]);
+});
+
+it("empties a log past its size cap when a worker starts", async () => {
+  const box = sandbox();
+  mkdirSync(box.paths.folder, { recursive: true });
+  writeFileSync(box.paths.log, "x".repeat(WORKER_LOG_MAX_BYTES + 1));
+  hook(box, note(box, "Start"));
+  await waitFor(
+    () => readFileSync(box.paths.log, "utf8").includes(WORKER_STARTED_LOG),
+    "the start line",
+  );
+  expect(statSync(box.paths.log).size).toBeLessThan(1024);
 });
 
 it("takes over a lock last refreshed before the boot even if its process id is now in use", async () => {
