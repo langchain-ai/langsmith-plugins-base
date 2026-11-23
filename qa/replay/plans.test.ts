@@ -512,6 +512,30 @@ describe("claudePlan", () => {
     ]);
   });
 
+  it("expects no turn for the placeholder reply Claude Code writes when it resumes a session", () => {
+    const plan = claudePlan([
+      said(0, "first"),
+      { type: "assistant", message: { id: "m1", stop_reason: "end_turn", content: [] } },
+      {
+        type: "assistant",
+        message: {
+          id: "m2",
+          model: "<synthetic>",
+          stop_reason: "stop_sequence",
+          content: [{ type: "text", text: "No response requested." }],
+        },
+      },
+      said(1, "second"),
+      toolCalls(2, { id: "t1", name: "Bash" }),
+      toolResults(3, ["t1"]),
+      { type: "assistant", message: { id: "m3", stop_reason: "end_turn", content: [] } },
+    ]);
+    expect(plan.turns.map(({ prompt, minTools }) => [prompt, minTools])).toEqual([
+      ["first", 0],
+      ["second", 1],
+    ]);
+  });
+
   it("replays a subagent started by another subagent inside its parent's Agent call", () => {
     const dig = { name: "Agent", input: { prompt: "dig deeper" } };
     const launched = [

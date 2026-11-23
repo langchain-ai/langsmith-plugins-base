@@ -8,6 +8,7 @@ import {
   CLAUDE_PEER_ORIGIN,
   CLAUDE_SHELL_PROMPT,
   CLAUDE_SYSTEM_REMINDER,
+  CLAUDE_SYNTHETIC_MODEL,
   CLAUDE_TASK_NOTIFICATION,
   CLAUDE_TASK_SUMMARY,
   DEFAULT_SUBAGENT_TYPE,
@@ -303,7 +304,8 @@ export function claudePlan(
       lastText = "";
       emit(index, { hook_event_name: "UserPromptSubmit", prompt: current.prompt });
     }
-    if (line.type === "assistant" && !line.isSidechain && current === undefined) {
+    const synthetic = line.message?.model === CLAUDE_SYNTHETIC_MODEL;
+    if (line.type === "assistant" && !line.isSidechain && !synthetic && current === undefined) {
       current = {
         prompt: "",
         command: "",

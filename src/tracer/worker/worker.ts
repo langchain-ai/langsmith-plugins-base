@@ -127,6 +127,7 @@ class TracerWorker {
         sessionId: note.sessionId,
         integration: note.integration,
         writer: note.writer,
+        tracingMode: note.tracingMode,
         bookmarks: parked ?? {},
         pendingNotes: [],
         builderState: undefined,

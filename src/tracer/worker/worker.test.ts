@@ -281,6 +281,12 @@ it("gives a saved session's builder its tracing mode", async () => {
   expect(await recorded(box, 2)).toEqual(["s mode off", "s note Start"]);
 });
 
+it("gives a new session's builder the tracing mode of its first note", async () => {
+  const box = sandbox();
+  hook(box, { ...note(box, "Start"), tracingMode: "metadata" });
+  expect(await recorded(box, 2)).toEqual(["s mode metadata", "s note Start"]);
+});
+
 it("sets aside a session with no notes for a day and picks it up where it left off", async () => {
   const box = sandbox();
   const old = join(box.home, "old.jsonl");
