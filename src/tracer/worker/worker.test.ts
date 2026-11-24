@@ -341,6 +341,21 @@ it("picks up an ended session where it left off when it resumes", async () => {
   ]);
 });
 
+it("forgets a set-aside session once its transcripts are gone", async () => {
+  const box = sandbox();
+  const gone = join(box.home, "gone.jsonl");
+  const goneBookmark = { [gone]: { path: gone, offset: 0 } };
+  const mainBookmark = { [box.main]: { path: box.main, offset: 0 } };
+  const parked = { gone: goneBookmark, kept: { ...goneBookmark, ...mainBookmark } };
+  hook(box, note(box, "Start"), false);
+  writeFileSync(box.paths.snapshot, JSON.stringify({ version: 1, sessions: {}, parked }));
+  startWorker(box);
+  const saved = () =>
+    existsSync(box.paths.snapshot) ? JSON.parse(readFileSync(box.paths.snapshot, "utf8")) : {};
+  await waitFor(() => "s" in (saved().sessions ?? {}), "the snapshot to save");
+  expect(Object.keys(saved().parked)).toEqual(["kept"]);
+});
+
 it("empties a log past its size cap when a worker starts", async () => {
   const box = sandbox();
   mkdirSync(box.paths.folder, { recursive: true });
